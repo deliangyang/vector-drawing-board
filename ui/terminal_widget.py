@@ -1,17 +1,20 @@
 """Embedded terminal widget for the terminal board.
 
-实现目标：
-- 交互稳定：一行输入，对应一行命令执行；
-- 不再出现字符重复、单词拆行的问题；
-- 支持基本的 `cd` 和当前目录保持。
-实现方式：每一行命令单独启动一个 shell 进程执行（非长期驻留 shell）。
+- 一行输入对应一行命令执行，支持 cd；
+- 输出支持 ANSI 颜色、加粗、下划线等。
 """
 
 import os
 import sys
 
 from PyQt5.QtCore import Qt, QProcess, QTimer
-from PyQt5.QtGui import QFont, QFontDatabase
+from PyQt5.QtGui import (
+    QFont,
+    QFontDatabase,
+    QColor,
+    QBrush,
+    QTextCharFormat,
+)
 from PyQt5.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -19,6 +22,22 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QFrame,
 )
+
+# ANSI 颜色（深色背景）
+ANSI_FG = [
+    QColor("#000000"), QColor("#cd3131"), QColor("#0dbc79"), QColor("#e5e510"),
+    QColor("#2472c8"), QColor("#bc3fbc"), QColor("#11a8cd"), QColor("#e5e5e5"),
+]
+ANSI_FG_BRIGHT = [
+    QColor("#666666"), QColor("#f14c4c"), QColor("#23d18b"), QColor("#f5f543"),
+    QColor("#3b8eea"), QColor("#d670d6"), QColor("#29b8db"), QColor("#e5e5e5"),
+]
+ANSI_BG = [
+    QColor("#000000"), QColor("#cd3131"), QColor("#0dbc79"), QColor("#e5e510"),
+    QColor("#2472c8"), QColor("#bc3fbc"), QColor("#11a8cd"), QColor("#e5e5e5"),
+]
+DEFAULT_FG = QColor("#d4d4d4")
+DEFAULT_BG = QColor("#1e1e1e")
 
 
 class TerminalWidget(QWidget):
@@ -68,6 +87,8 @@ class TerminalWidget(QWidget):
 
         # Current working directory for commands
         self._cwd = os.path.expanduser("~")
+        # ANSI 输出格式状态
+        self._current_char_format = self._default_char_format()
 
         # 确保输入框能获得焦点（点击终端内容区时也会把焦点给输入框）
         self._output.setFocusPolicy(Qt.ClickFocus)
@@ -89,6 +110,124 @@ class TerminalWidget(QWidget):
 
     def _append_line(self, text: str):
         self._append(text + "\n")
+
+    def _default_char_format(self) -> QTextCharFormat:
+        fmt = QTextCharFormat()
+        fmt.setForeground(DEFAULT_FG)
+        fmt.setBackground(QBrush(DEFAULT_BG))
+        return fmt
+
+    def _apply_sgr(self, params: list) -> None:
+        """根据 SGR 参数更新当前格式（颜色、加粗等）。"""
+        if not params:
+            params = [0]
+        i = 0
+        while i < len(params):
+            p = params[i]
+            if p == 0:
+                self._current_char_format = self._default_char_format()
+            elif p == 1:
+                self._current_char_format.setFontWeight(99)
+            elif p == 2:
+                self._current_char_format.setFontWeight(0)
+            elif p == 3:
+                self._current_char_format.setFontItalic(True)
+            elif p == 4:
+                self._current_char_format.setFontUnderline(True)
+            elif p == 7:
+                self._current_char_format.setForeground(DEFAULT_BG)
+                self._current_char_format.setBackground(QBrush(DEFAULT_FG))
+            elif p == 22:
+                self._current_char_format.setFontWeight(0)
+            elif p == 23:
+                self._current_char_format.setFontItalic(False)
+            elif p == 24:
+                self._current_char_format.setFontUnderline(False)
+            elif p == 27:
+                self._current_char_format.setForeground(DEFAULT_FG)
+                self._current_char_format.setBackground(QBrush(DEFAULT_BG))
+            elif 30 <= p <= 37:
+                self._current_char_format.setForeground(ANSI_FG[p - 30])
+            elif p == 39:
+                self._current_char_format.setForeground(DEFAULT_FG)
+            elif 40 <= p <= 47:
+                self._current_char_format.setBackground(QBrush(ANSI_BG[p - 40]))
+            elif p == 49:
+                self._current_char_format.setBackground(QBrush(DEFAULT_BG))
+            elif 90 <= p <= 97:
+                self._current_char_format.setForeground(ANSI_FG_BRIGHT[p - 90])
+            elif 100 <= p <= 107:
+                self._current_char_format.setBackground(QBrush(ANSI_FG_BRIGHT[p - 100]))
+            i += 1
+
+    def _parse_ansi_and_yield_segments(self, text: str):
+        """解析 ANSI 转义，yield (纯文本, QTextCharFormat) 片段。"""
+        ESC = "\x1b"
+        i = 0
+        buf = []
+        n = len(text)
+
+        def flush():
+            nonlocal buf
+            if buf:
+                segment = "".join(buf)
+                buf = []
+                yield segment, QTextCharFormat(self._current_char_format)
+
+        while i < n:
+            if text[i] == ESC and i + 1 < n:
+                yield from flush()
+                if text[i + 1] == "[":
+                    i += 2
+                    start = i
+                    while i < n and text[i] not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@`":
+                        i += 1
+                    if i < n:
+                        letter = text[i]
+                        params_str = text[start:i]
+                        i += 1
+                        if letter == "m":
+                            parts = params_str.split(";")
+                            params = []
+                            for part in parts:
+                                part = part.lstrip("?")
+                                if part == "":
+                                    params.append(0)
+                                else:
+                                    try:
+                                        params.append(int(part))
+                                    except ValueError:
+                                        pass
+                            if params:
+                                self._apply_sgr(params)
+                elif text[i + 1] == "]":
+                    i += 2
+                    while i < n:
+                        if text[i] == "\x07":
+                            i += 1
+                            break
+                        if text[i] == ESC and i + 1 < n and text[i + 1] == "\\":
+                            i += 2
+                            break
+                        i += 1
+                elif text[i + 1] in "()":
+                    i += 3
+                else:
+                    i += 2
+                continue
+            buf.append(text[i])
+            i += 1
+        yield from flush()
+
+    def _append_ansi(self, text: str):
+        """追加带 ANSI 颜色/加粗等的输出。"""
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        self._output.moveCursor(self._output.textCursor().End)
+        for segment, fmt in self._parse_ansi_and_yield_segments(text):
+            if segment:
+                self._output.setCurrentCharFormat(fmt)
+                self._output.insertPlainText(segment)
+        self._output.moveCursor(self._output.textCursor().End)
 
     def _prompt(self) -> str:
         base = os.path.basename(self._cwd) or self._cwd
@@ -146,8 +285,7 @@ class TerminalWidget(QWidget):
                 text = bytes(data).decode("utf-8", errors="replace")
             except Exception:
                 text = str(data)
-            text = text.replace("\r\n", "\n").replace("\r", "\n")
-            self._append(text)
+            self._append_ansi(text)
 
         def on_finished(code, status):
             if code != 0:
