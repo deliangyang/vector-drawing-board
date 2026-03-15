@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 from PyQt5.QtCore import Qt, QProcess, QByteArray, QTimer, QProcessEnvironment
 from PyQt5.QtGui import (
@@ -39,7 +40,7 @@ class TerminalWidget(QWidget):
         self._process = QProcess(self)
         self._process.setProcessChannelMode(QProcess.MergedChannels)
         self._process.readyReadStandardOutput.connect(self._on_ready_read)
-        self._process.readyReadStandardError.connect(self._on_ready_read)
+        # Do not connect readyReadStandardError: MergedChannels puts stderr into stdout
         self._process.finished.connect(self._on_finished)
         self._process.stateChanged.connect(self._on_state_changed)
         self._process.errorOccurred.connect(self._on_error)
@@ -68,6 +69,8 @@ class TerminalWidget(QWidget):
 
         self._text.setPlainText("Starting shell…\n")
         self._current_char_format = self._default_char_format()
+        self._last_key_sent = None
+        self._last_key_time = 0.0
         self._start_shell()
         QTimer.singleShot(400, self._ensure_prompt)
 
@@ -105,6 +108,7 @@ class TerminalWidget(QWidget):
             return False
         penv = QProcessEnvironment.systemEnvironment()
         penv.insert("SHELL", shell)
+        penv.insert("TERM", "xterm")
         self._process.setProcessEnvironment(penv)
         # macOS: script -q /dev/null (uses $SHELL from env)
         # Linux: script -q -c "shell" /dev/null
@@ -223,7 +227,7 @@ class TerminalWidget(QWidget):
     def _on_ready_read(self):
         data = self._process.readAllStandardOutput()
         if not data:
-            data = self._process.readAllStandardError()
+            return
         if data:
             try:
                 text = bytes(data).decode("utf-8", errors="replace")
@@ -251,10 +255,20 @@ class TerminalWidget(QWidget):
         self._text.insertPlainText(f"\n[Process exited with code {code}]\n")
 
     def _key_press_event(self, event: QKeyEvent):
+        if event.isAutoRepeat():
+            return
         key = event.key()
         text = event.text()
 
-        # PTY echoes input; we only send, no local echo, so no duplicate
+        # Deduplicate: same key within 40ms -> treat as duplicate delivery (e.g. macOS)
+        now = time.time()
+        key_id = (key, text)
+        if key_id == self._last_key_sent and (now - self._last_key_time) < 0.04:
+            return
+        self._last_key_sent = key_id
+        self._last_key_time = now
+
+        # PTY echoes input; we only send, no local echo
         if key in (Qt.Key_Return, Qt.Key_Enter):
             self._send("\r\n")
             return
