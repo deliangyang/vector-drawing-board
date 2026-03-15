@@ -1,4 +1,4 @@
-"""Entry point for the Vector Drawing Board application."""
+"""Entry point for the Terminal Board application."""
 
 import sys
 
@@ -9,8 +9,8 @@ from ui.main_window import MainWindow
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("Vector Drawing Board")
-    app.setOrganizationName("VectorDrawingBoard")
+    app.setApplicationName("Terminal Board")
+    app.setOrganizationName("TerminalBoard")
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())

@@ -1,176 +1,69 @@
-"""Drawing canvas widget for the vector drawing board."""
+"""Canvas background widget for the terminal board (zoom only, no drawing)."""
 
-from enum import Enum
-from typing import List, Optional
-
-from PyQt5.QtCore import Qt, QPointF, QRectF, pyqtSignal
-from PyQt5.QtGui import QPainter, QColor, QPen, QBrush
+from PyQt5.QtCore import Qt, QRectF, pyqtSignal
+from PyQt5.QtGui import QPainter, QColor, QBrush, QWheelEvent
 from PyQt5.QtWidgets import QWidget
 
-from core.shapes import Shape, ShapeType, Line, Rectangle, Circle
-
-
-class Tool(str, Enum):
-    """Drawing tool identifiers."""
-    SELECT = "select"
-    LINE = "line"
-    RECTANGLE = "rectangle"
-    CIRCLE = "circle"
+# Logical size of the canvas
+CANVAS_LOGICAL_WIDTH = 600
+CANVAS_LOGICAL_HEIGHT = 400
+ZOOM_MIN = 0.25
+ZOOM_MAX = 3.0
+ZOOM_STEP = 0.25
 
 
 class DrawingCanvas(QWidget):
-    """Interactive canvas widget for drawing vector shapes."""
+    """Canvas widget: background only, supports zoom (for terminal layout)."""
 
-    shapes_changed = pyqtSignal()
+    zoom_changed = pyqtSignal(float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.shapes: List[Shape] = []
-        self.current_tool: str = Tool.LINE
-        self.current_color: QColor = QColor("black")
-        self.current_pen_width: int = 2
-        self._drawing: bool = False
-        self._start_point: Optional[QPointF] = None
-        self._current_point: Optional[QPointF] = None
-        self._selected_shape: Optional[Shape] = None
+        self._zoom_factor: float = 1.0
 
-        self.setMinimumSize(600, 400)
-        self.setMouseTracking(True)
-        self.setStyleSheet("background-color: white;")
+        self._update_zoom_size()
+        self.setStyleSheet("background-color: #252526;")
         self.setAttribute(Qt.WA_StaticContents)
 
-    # ------------------------------------------------------------------
-    # Tool / style setters
-    # ------------------------------------------------------------------
+    def _update_zoom_size(self):
+        w = max(1, int(CANVAS_LOGICAL_WIDTH * self._zoom_factor))
+        h = max(1, int(CANVAS_LOGICAL_HEIGHT * self._zoom_factor))
+        self.setMinimumSize(w, h)
+        self.resize(w, h)
 
-    def set_tool(self, tool: str):
-        self._clear_selection()
-        self.current_tool = tool
+    def zoom_factor(self) -> float:
+        return self._zoom_factor
 
-    def set_color(self, color: QColor):
-        self.current_color = color
-
-    def set_pen_width(self, width: int):
-        self.current_pen_width = width
-
-    # ------------------------------------------------------------------
-    # Undo / clear
-    # ------------------------------------------------------------------
-
-    def undo(self):
-        if self.shapes:
-            self.shapes.pop()
-            self.shapes_changed.emit()
-            self.update()
-
-    def clear(self):
-        self.shapes.clear()
-        self._clear_selection()
-        self.shapes_changed.emit()
+    def set_zoom_factor(self, factor: float):
+        self._zoom_factor = max(ZOOM_MIN, min(ZOOM_MAX, factor))
+        self._update_zoom_size()
+        self.zoom_changed.emit(self._zoom_factor)
         self.update()
 
-    # ------------------------------------------------------------------
-    # Persistence helpers
-    # ------------------------------------------------------------------
+    def zoom_in(self):
+        self.set_zoom_factor(self._zoom_factor + ZOOM_STEP)
 
-    def shapes_to_dict(self) -> dict:
-        return {"shapes": [s.to_dict() for s in self.shapes]}
+    def zoom_out(self):
+        self.set_zoom_factor(self._zoom_factor - ZOOM_STEP)
 
-    def shapes_from_dict(self, data: dict):
-        self.shapes = [Shape.from_dict(d) for d in data.get("shapes", [])]
-        self._clear_selection()
-        self.shapes_changed.emit()
-        self.update()
+    def zoom_reset(self):
+        self.set_zoom_factor(1.0)
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _clear_selection(self):
-        if self._selected_shape:
-            self._selected_shape.selected = False
-            self._selected_shape = None
-
-    def _make_rect(self, p1: QPointF, p2: QPointF) -> QRectF:
-        """Return a normalised QRectF from two corner points."""
-        return QRectF(
-            min(p1.x(), p2.x()),
-            min(p1.y(), p2.y()),
-            abs(p2.x() - p1.x()),
-            abs(p2.y() - p1.y()),
-        )
-
-    def _build_preview_shape(self) -> Optional[Shape]:
-        """Build a temporary preview shape during mouse drag."""
-        if self._start_point is None or self._current_point is None:
-            return None
-        if self.current_tool == Tool.LINE:
-            return Line(self._start_point, self._current_point,
-                        self.current_color, self.current_pen_width)
-        if self.current_tool == Tool.RECTANGLE:
-            return Rectangle(self._make_rect(self._start_point, self._current_point),
-                             self.current_color, self.current_pen_width)
-        if self.current_tool == Tool.CIRCLE:
-            return Circle(self._make_rect(self._start_point, self._current_point),
-                          self.current_color, self.current_pen_width)
-        return None
-
-    # ------------------------------------------------------------------
-    # Qt event handlers
-    # ------------------------------------------------------------------
-
-    def mousePressEvent(self, event):
-        if event.button() != Qt.LeftButton:
-            return
-        pos = QPointF(event.pos())
-        if self.current_tool == Tool.SELECT:
-            self._clear_selection()
-            # Iterate in reverse to select the topmost shape
-            for shape in reversed(self.shapes):
-                if shape.contains(pos):
-                    shape.selected = True
-                    self._selected_shape = shape
-                    break
-            self.update()
+    def wheelEvent(self, event: QWheelEvent):
+        if event.modifiers() & Qt.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self.zoom_in()
+            elif delta < 0:
+                self.zoom_out()
+            event.accept()
         else:
-            self._drawing = True
-            self._start_point = pos
-            self._current_point = pos
-
-    def mouseMoveEvent(self, event):
-        if self._drawing:
-            self._current_point = QPointF(event.pos())
-            self.update()
-
-    def mouseReleaseEvent(self, event):
-        if event.button() != Qt.LeftButton or not self._drawing:
-            return
-        self._drawing = False
-        self._current_point = QPointF(event.pos())
-        shape = self._build_preview_shape()
-        if shape is not None:
-            self.shapes.append(shape)
-            self.shapes_changed.emit()
-        self._start_point = None
-        self._current_point = None
-        self.update()
+            super().wheelEvent(event)
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        # White background
-        painter.fillRect(self.rect(), QBrush(QColor("white")))
-
-        # Draw committed shapes
-        for shape in self.shapes:
-            shape.draw(painter)
-
-        # Draw live preview
-        if self._drawing:
-            preview = self._build_preview_shape()
-            if preview:
-                pen = QPen(self.current_color, self.current_pen_width, Qt.DashLine)
-                painter.setPen(pen)
-                painter.setBrush(QBrush())
-                preview.draw(painter)
+        logical_rect = QRectF(0, 0, CANVAS_LOGICAL_WIDTH, CANVAS_LOGICAL_HEIGHT)
+        painter.save()
+        painter.scale(self._zoom_factor, self._zoom_factor)
+        painter.fillRect(logical_rect, QBrush(QColor("#252526")))
+        painter.restore()
