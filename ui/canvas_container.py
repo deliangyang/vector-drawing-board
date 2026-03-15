@@ -31,10 +31,9 @@ class CanvasContainer(QWidget):
         return self._canvas
 
     def _sync_size_from_canvas(self):
-        """Update container size to match canvas (e.g. after zoom)."""
-        self.setMinimumSize(self._canvas.minimumSize())
-        self.resize(self._canvas.size())
-        self._canvas.setGeometry(0, 0, self._canvas.width(), self._canvas.height())
+        """Update child geometries when zoom changes."""
+        # First position the background canvas; container size will be updated separately
+        self._canvas.setGeometry(0, 0, self._canvas.minimumWidth(), self._canvas.minimumHeight())
         zoom = self._canvas.zoom_factor()
         for t in self._terminals:
             card = t["card"]
@@ -46,14 +45,38 @@ class CanvasContainer(QWidget):
                 int(lh * zoom),
             )
             card.raise_()
+        self._update_container_size()
+
+    def _update_container_size(self):
+        """Make container large enough to hold all terminals (effectively infinite canvas)."""
+        zoom = self._canvas.zoom_factor()
+        # Base size from logical canvas
+        base_w = self._canvas.minimumWidth()
+        base_h = self._canvas.minimumHeight()
+        max_w = base_w
+        max_h = base_h
+        for t in self._terminals:
+            x = (t["lx"] + t["lw"]) * zoom
+            y = (t["ly"] + t["lh"]) * zoom
+            if x > max_w:
+                max_w = x
+            if y > max_h:
+                max_h = y
+        margin = 40
+        w = int(max_w + margin)
+        h = int(max_h + margin)
+        self.setMinimumSize(w, h)
+        self.resize(w, h)
+        # Stretch background canvas to cover the visible area
+        self._canvas.setGeometry(0, 0, w, h)
 
     def _on_zoom_changed(self, zoom: float):
         self._sync_size_from_canvas()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # Keep canvas at top-left with its fixed size when container is resized by scroll area
-        self._canvas.setGeometry(0, 0, self._canvas.width(), self._canvas.height())
+        # If the scroll area made the container bigger, stretch the canvas as well
+        self._canvas.setGeometry(0, 0, self.width(), self.height())
 
     def get_terminal_layout(self):
         """Return list of terminal rects in logical coords for persistence."""
@@ -99,6 +122,7 @@ class CanvasContainer(QWidget):
             "lh": lh,
         })
         self.terminal_count_changed.emit(len(self._terminals))
+        self._update_container_size()
 
     def add_terminal(self):
         """Add a new terminal card on the canvas with spaced grid layout."""
@@ -124,6 +148,7 @@ class CanvasContainer(QWidget):
                 t["lw"] = rect.width() / zoom
                 t["lh"] = rect.height() / zoom
                 break
+        self._update_container_size()
 
     def _on_card_closed(self):
         card = self.sender()
@@ -132,6 +157,7 @@ class CanvasContainer(QWidget):
                 self._terminals.pop(i)
                 self.terminal_count_changed.emit(len(self._terminals))
                 break
+        self._update_container_size()
 
     def close_all_terminals(self):
         """Kill all terminal processes so the app can exit cleanly."""
