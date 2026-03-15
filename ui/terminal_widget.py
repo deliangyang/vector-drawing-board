@@ -1,325 +1,180 @@
-"""Embedded terminal widget for the drawing board."""
+"""Embedded terminal widget for the terminal board.
+
+实现目标：
+- 交互稳定：一行输入，对应一行命令执行；
+- 不再出现字符重复、单词拆行的问题；
+- 支持基本的 `cd` 和当前目录保持。
+实现方式：每一行命令单独启动一个 shell 进程执行（非长期驻留 shell）。
+"""
 
 import os
 import sys
-import time
 
-from PyQt5.QtCore import Qt, QProcess, QByteArray, QTimer, QProcessEnvironment
-from PyQt5.QtGui import (
-    QColor,
-    QFont,
-    QFontDatabase,
-    QKeyEvent,
-    QTextCharFormat,
-    QBrush,
+from PyQt5.QtCore import Qt, QProcess, QTimer
+from PyQt5.QtGui import QFont, QFontDatabase
+from PyQt5.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QPlainTextEdit,
+    QLineEdit,
+    QFrame,
 )
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPlainTextEdit, QFrame
-
-# Default terminal colors (dark background)
-ANSI_FG = [
-    QColor("#000000"), QColor("#cd3131"), QColor("#0dbc79"), QColor("#e5e510"),
-    QColor("#2472c8"), QColor("#bc3fbc"), QColor("#11a8cd"), QColor("#e5e5e5"),
-]
-ANSI_FG_BRIGHT = [
-    QColor("#666666"), QColor("#f14c4c"), QColor("#23d18b"), QColor("#f5f543"),
-    QColor("#3b8eea"), QColor("#d670d6"), QColor("#29b8db"), QColor("#e5e5e5"),
-]
-ANSI_BG = [
-    QColor("#000000"), QColor("#cd3131"), QColor("#0dbc79"), QColor("#e5e510"),
-    QColor("#2472c8"), QColor("#bc3fbc"), QColor("#11a8cd"), QColor("#e5e5e5"),
-]
-DEFAULT_FG = QColor("#d4d4d4")
-DEFAULT_BG = QColor("#1e1e1e")
 
 
 class TerminalWidget(QWidget):
-    """Single terminal instance: runs a shell and displays I/O."""
+    """Line-oriented terminal: output view + single-line input, per-command shell."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._process = QProcess(self)
-        self._process.setProcessChannelMode(QProcess.MergedChannels)
-        self._process.readyReadStandardOutput.connect(self._on_ready_read)
-        # Do not connect readyReadStandardError: MergedChannels puts stderr into stdout
-        self._process.finished.connect(self._on_finished)
-        self._process.stateChanged.connect(self._on_state_changed)
-        self._process.errorOccurred.connect(self._on_error)
 
-        self._text = QPlainTextEdit(self)
-        self._text.setReadOnly(False)
+        # --- Output area ---
+        self._output = QPlainTextEdit(self)
+        self._output.setReadOnly(True)
         fixed_font = QFontDatabase.systemFont(QFontDatabase.FixedFont)
         fixed_font.setPointSize(11)
         fixed_font.setStyleHint(QFont.TypeWriter)
-        self._text.setFont(fixed_font)
-        self._text.setStyleSheet(
+        self._output.setFont(fixed_font)
+        self._output.setStyleSheet(
             "background-color: #1e1e1e; color: #d4d4d4; "
             "selection-background-color: #264f78;"
         )
-        # Native shell-like layout: tab width 8, no extra doc margin
-        fm = self._text.fontMetrics()
-        char_width = fm.horizontalAdvance(" ") if hasattr(fm, "horizontalAdvance") else fm.width(" ")
-        self._text.setTabStopDistance(char_width * 8)
-        self._text.document().setDocumentMargin(0)
-        self._text.setFrameShape(QFrame.NoFrame)
-        self._text.keyPressEvent = self._key_press_event
+        fm = self._output.fontMetrics()
+        char_width = (
+            fm.horizontalAdvance(" ")
+            if hasattr(fm, "horizontalAdvance")
+            else fm.width(" ")
+        )
+        self._output.setTabStopDistance(char_width * 8)
+        self._output.document().setDocumentMargin(4)
+        self._output.setFrameShape(QFrame.NoFrame)
+
+        # --- Input line ---
+        self._input = QLineEdit(self)
+        self._input.setFont(fixed_font)
+        self._input.setMinimumHeight(32)
+        self._input.setFocusPolicy(Qt.StrongFocus)
+        self._input.setPlaceholderText("Type command and press Enter…")
+        self._input.setStyleSheet(
+            "background-color: #1e1e1e; color: #d4d4d4; "
+            "border-top: 1px solid #333; padding: 4px;"
+        )
+        self._input.returnPressed.connect(self._on_return_pressed)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self._text)
+        layout.setSpacing(0)
+        layout.addWidget(self._output, 1)
+        layout.addWidget(self._input, 0)
 
-        self._text.setPlainText("Starting shell…\n")
-        self._current_char_format = self._default_char_format()
-        self._last_key_sent = None
-        self._last_key_time = 0.0
-        self._start_shell()
-        QTimer.singleShot(400, self._ensure_prompt)
+        # Current working directory for commands
+        self._cwd = os.path.expanduser("~")
 
-    def _default_char_format(self) -> QTextCharFormat:
-        fmt = QTextCharFormat()
-        fmt.setForeground(DEFAULT_FG)
-        fmt.setBackground(QBrush(DEFAULT_BG))
-        return fmt
+        # 确保输入框能获得焦点（点击终端内容区时也会把焦点给输入框）
+        self._output.setFocusPolicy(Qt.ClickFocus)
+        self._output.mousePressEvent = self._output_click_focus_input
 
-    def _ensure_prompt(self):
-        """If shell is running but still showing startup text, show $ prompt."""
-        if self._process.state() == QProcess.Running:
-            cur = self._text.toPlainText().strip()
-            if not cur or cur == "Starting shell…" or cur.startswith("[Failed"):
-                self._text.setPlainText("$ ")
-                self._text.moveCursor(self._text.textCursor().End)
+    def _output_click_focus_input(self, event):
+        """Click on output area -> focus input line so user can type."""
+        self._input.setFocus()
+        super(QPlainTextEdit, self._output).mousePressEvent(event)
 
-    def _start_shell(self):
-        self._process.setWorkingDirectory(os.path.expanduser("~"))
-        if sys.platform == "win32":
-            self._process.start("cmd.exe", [])
-        else:
-            shell = os.environ.get("SHELL", "/bin/bash")
-            if not os.path.isfile(shell):
-                shell = "/bin/bash"
-            # Run shell inside script(1) PTY so it stays interactive (doesn't exit with code 1)
-            if self._start_via_script(shell):
-                return
-            self._process.start(shell, [])
+    # ------------------------------------------------------------------
+    # Utility
+    # ------------------------------------------------------------------
 
-    def _start_via_script(self, shell: str) -> bool:
-        """Start shell in a PTY via script(1); return True if launched."""
-        script_path = "/usr/bin/script"
-        if not os.path.isfile(script_path):
-            return False
-        penv = QProcessEnvironment.systemEnvironment()
-        penv.insert("SHELL", shell)
-        penv.insert("TERM", "xterm")
-        self._process.setProcessEnvironment(penv)
-        # macOS: script -q /dev/null (uses $SHELL from env)
-        # Linux: script -q -c "shell" /dev/null
-        if sys.platform == "darwin":
-            self._process.start(script_path, ["-q", "/dev/null"])
-        else:
-            self._process.start(script_path, ["-q", "-c", shell, "/dev/null"])
-        return True
+    def _append(self, text: str):
+        self._output.moveCursor(self._output.textCursor().End)
+        self._output.insertPlainText(text)
+        self._output.moveCursor(self._output.textCursor().End)
 
-    def _apply_sgr(self, params: list) -> None:
-        """Update self._current_char_format from SGR params (e.g. 0, 1, 32, 45)."""
-        if not params:
-            params = [0]
-        i = 0
-        while i < len(params):
-            p = params[i]
-            if p == 0:
-                self._current_char_format = self._default_char_format()
-            elif p == 1:
-                self._current_char_format.setFontWeight(99)  # bold
-            elif p == 2:
-                self._current_char_format.setFontWeight(0)
-            elif p == 3:
-                self._current_char_format.setFontItalic(True)
-            elif p == 4:
-                self._current_char_format.setFontUnderline(True)
-            elif p == 5 or p == 6:
-                pass  # blink, no Qt equivalent
-            elif p == 7:
-                self._current_char_format.setForeground(DEFAULT_BG)
-                self._current_char_format.setBackground(QBrush(DEFAULT_FG))
-            elif p == 22:
-                self._current_char_format.setFontWeight(0)
-            elif p == 23:
-                self._current_char_format.setFontItalic(False)
-            elif p == 24:
-                self._current_char_format.setFontUnderline(False)
-            elif p == 27:
-                self._current_char_format.setForeground(DEFAULT_FG)
-                self._current_char_format.setBackground(QBrush(DEFAULT_BG))
-            elif 30 <= p <= 37:
-                self._current_char_format.setForeground(ANSI_FG[p - 30])
-            elif p == 39:
-                self._current_char_format.setForeground(DEFAULT_FG)
-            elif 40 <= p <= 47:
-                self._current_char_format.setBackground(QBrush(ANSI_BG[p - 40]))
-            elif p == 49:
-                self._current_char_format.setBackground(QBrush(DEFAULT_BG))
-            elif 90 <= p <= 97:
-                self._current_char_format.setForeground(ANSI_FG_BRIGHT[p - 90])
-            elif 100 <= p <= 107:
-                self._current_char_format.setBackground(QBrush(ANSI_FG_BRIGHT[p - 100]))
-            i += 1
+    def _append_line(self, text: str):
+        self._append(text + "\n")
 
-    def _parse_ansi_and_yield_segments(self, text: str):
-        """Parse ANSI escape sequences; yield (plain_text, QTextCharFormat) segments."""
-        ESC = "\x1b"
-        i = 0
-        buf = []
-        n = len(text)
+    def _prompt(self) -> str:
+        base = os.path.basename(self._cwd) or self._cwd
+        return f"{base}$ "
 
-        def flush():
-            nonlocal buf
-            if buf:
-                segment = "".join(buf)
-                buf = []
-                yield segment, QTextCharFormat(self._current_char_format)
+    # ------------------------------------------------------------------
+    # Input handling
+    # ------------------------------------------------------------------
 
-        while i < n:
-            if text[i] == ESC and i + 1 < n:
-                yield from flush()
-                if text[i + 1] == "[":
-                    # CSI
-                    i += 2
-                    start = i
-                    while i < n and text[i] not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@`":
-                        i += 1
-                    if i < n:
-                        letter = text[i]
-                        params_str = text[start:i]
-                        i += 1
-                        if letter == "m":
-                            parts = params_str.split(";")
-                            params = []
-                            for part in parts:
-                                part = part.lstrip("?")
-                                if part == "":
-                                    params.append(0)
-                                else:
-                                    try:
-                                        params.append(int(part))
-                                    except ValueError:
-                                        pass
-                            if params:
-                                self._apply_sgr(params)
-                elif text[i + 1] == "]":
-                    # OSC: consume until BEL or ST
-                    i += 2
-                    while i < n:
-                        if text[i] == "\x07":
-                            i += 1
-                            break
-                        if text[i] == ESC and i + 1 < n and text[i + 1] == "\\":
-                            i += 2
-                            break
-                        i += 1
-                elif text[i + 1] in "()":
-                    i += 3  # two-byte
-                else:
-                    i += 2
-                continue
-            buf.append(text[i])
-            i += 1
-        yield from flush()
-
-    def _on_ready_read(self):
-        data = self._process.readAllStandardOutput()
-        if not data:
+    def _on_return_pressed(self):
+        line = self._input.text()
+        self._input.clear()
+        prompt = self._prompt()
+        self._append_line(prompt + line)
+        line = line.strip()
+        if not line:
             return
-        if data:
+
+        # Handle built-in 'cd' so cwd 能保持
+        if line.startswith("cd"):
+            self._handle_cd(line)
+            return
+
+        self._run_command(line)
+
+    def _handle_cd(self, line: str):
+        parts = line.split(maxsplit=1)
+        if len(parts) == 1 or not parts[1]:
+            target = os.path.expanduser("~")
+        else:
+            target = os.path.expanduser(parts[1])
+            if not os.path.isabs(target):
+                target = os.path.join(self._cwd, target)
+
+        if not os.path.isdir(target):
+            self._append_line(f"cd: no such directory: {target}")
+            return
+        self._cwd = os.path.abspath(target)
+        self._append_line(f"(cwd) {self._cwd}")
+
+    # ------------------------------------------------------------------
+    # Command execution (per-line QProcess)
+    # ------------------------------------------------------------------
+
+    def _run_command(self, line: str):
+        proc = QProcess(self)
+        proc.setProcessChannelMode(QProcess.MergedChannels)
+        proc.setWorkingDirectory(self._cwd)
+
+        def on_ready():
+            data = proc.readAllStandardOutput()
+            if not data:
+                return
             try:
                 text = bytes(data).decode("utf-8", errors="replace")
             except Exception:
                 text = str(data)
-            self._text.moveCursor(self._text.textCursor().End)
-            for segment, fmt in self._parse_ansi_and_yield_segments(text):
-                if segment:
-                    # Normalize \r: no overwrite (avoids deleting prompt / garbled output)
-                    segment = segment.replace("\r\n", "\n").replace("\r", "\n")
-                    self._text.setCurrentCharFormat(fmt)
-                    self._text.insertPlainText(segment)
-            self._text.moveCursor(self._text.textCursor().End)
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
+            self._append(text)
 
-    def _on_state_changed(self, state):
-        if state == QProcess.Running:
-            self._text.setPlainText("$ ")
-            self._text.moveCursor(self._text.textCursor().End)
+        def on_finished(code, status):
+            if code != 0:
+                self._append_line(f"[exit {code}]")
+            proc.deleteLater()
 
-    def _on_error(self, code):
-        self._text.setPlainText(f"[Failed to start shell: {code}]\n")
+        proc.readyReadStandardOutput.connect(on_ready)
+        proc.finished.connect(on_finished)
 
-    def _on_finished(self, code, status):
-        self._text.moveCursor(self._text.textCursor().End)
-        self._text.insertPlainText(f"\n[Process exited with code {code}]\n")
+        if sys.platform == "win32":
+            # Run via cmd /C
+            proc.start("cmd.exe", ["/C", line])
+        else:
+            # Use user's shell if available; fallback to /bin/bash
+            shell = os.environ.get("SHELL", "/bin/bash")
+            if not os.path.isfile(shell):
+                shell = "/bin/bash"
+            proc.start(shell, ["-lc", line])
 
-    def _key_press_event(self, event: QKeyEvent):
-        if event.isAutoRepeat():
-            return
-        key = event.key()
-        text = event.text()
+    # ------------------------------------------------------------------
+    # QWidget
+    # ------------------------------------------------------------------
 
-        # Deduplicate: same key within 40ms -> treat as duplicate delivery (e.g. macOS)
-        now = time.time()
-        key_id = (key, text)
-        if key_id == self._last_key_sent and (now - self._last_key_time) < 0.04:
-            return
-        self._last_key_sent = key_id
-        self._last_key_time = now
-
-        # PTY echoes input; we only send, no local echo
-        if key in (Qt.Key_Return, Qt.Key_Enter):
-            self._send("\r\n")
-            return
-        if key == Qt.Key_Backspace:
-            self._send("\b")
-            return
-        if key == Qt.Key_Delete:
-            self._send("\x1b[3~")
-            return
-        if key == Qt.Key_Up:
-            self._send("\x1b[A")
-            return
-        if key == Qt.Key_Down:
-            self._send("\x1b[B")
-            return
-        if key == Qt.Key_Left:
-            self._send("\x1b[D")
-            return
-        if key == Qt.Key_Right:
-            self._send("\x1b[C")
-            return
-        if key == Qt.Key_Home:
-            self._send("\x1b[H")
-            return
-        if key == Qt.Key_End:
-            self._send("\x1b[F")
-            return
-        if key == Qt.Key_Tab:
-            self._send("\t")
-            return
-        if text:
-            self._send(text)
-            return
-        super(QPlainTextEdit, self._text).keyPressEvent(event)
-
-    def _send(self, s: str):
-        if self._process.state() == QProcess.Running:
-            self._process.write(QByteArray(s.encode("utf-8")))
-
-    def kill_process(self):
-        """Force kill the shell process (for app exit)."""
-        if self._process.state() == QProcess.Running:
-            try:
-                self._process.closeWriteChannel()
-            except Exception:
-                pass
-            self._process.terminate()
-            if not self._process.waitForFinished(500):
-                self._process.kill()
-                self._process.waitForFinished(200)
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._input.setFocus)
 
     def closeEvent(self, event):
-        self.kill_process()
+        # 所有 per-command QProcess 都有我们作为 parent，Qt 会自动清理
         super().closeEvent(event)

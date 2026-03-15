@@ -136,6 +136,33 @@ class CanvasContainer(QWidget):
         ly = 50 + row * (lh + gap)
         self._add_terminal_at(lx, ly, lw, lh)
 
+    def relayout_terminals(self):
+        """Re-layout all existing terminals into a neat grid from top-left."""
+        if not self._terminals:
+            return
+        lw, lh = 380, 220
+        gap = 28
+        cols = 2
+        zoom = self._canvas.zoom_factor()
+        for index, t in enumerate(self._terminals):
+            col = index % cols
+            row = index // cols
+            lx = 50 + col * (lw + gap)
+            ly = 50 + row * (lh + gap)
+            t["lx"] = lx
+            t["ly"] = ly
+            t["lw"] = lw
+            t["lh"] = lh
+            card = t["card"]
+            card.setGeometry(
+                int(lx * zoom),
+                int(ly * zoom),
+                int(lw * zoom),
+                int(lh * zoom),
+            )
+            card.raise_()
+        self._update_container_size()
+
     def _on_card_geometry_changed(self, rect: QRect):
         """Update stored logical rect from card's new geometry (in pixel coords)."""
         zoom = self._canvas.zoom_factor()

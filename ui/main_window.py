@@ -122,6 +122,11 @@ class MainWindow(QMainWindow):
         act_add_terminal.triggered.connect(self._container.add_terminal)
         view_menu.addAction(act_add_terminal)
 
+        act_relayout = QAction("&Relayout Terminals", self)
+        act_relayout.setShortcut(QKeySequence("Ctrl+Shift+L"))
+        act_relayout.triggered.connect(self._container.relayout_terminals)
+        view_menu.addAction(act_relayout)
+
     def _build_toolbar(self):
         toolbar = QToolBar("Main", self)
         toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
@@ -131,6 +136,11 @@ class MainWindow(QMainWindow):
         act_add_terminal.setShortcut(QKeySequence("Ctrl+Shift+T"))
         act_add_terminal.triggered.connect(self._container.add_terminal)
         toolbar.addAction(act_add_terminal)
+
+        act_relayout = QAction("Relayout", self)
+        act_relayout.setShortcut(QKeySequence("Ctrl+Shift+L"))
+        act_relayout.triggered.connect(self._container.relayout_terminals)
+        toolbar.addAction(act_relayout)
 
     def _build_zoom_toolbar(self):
         zoom_toolbar = QToolBar("Zoom", self)
