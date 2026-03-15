@@ -1,7 +1,6 @@
 """Embedded terminal widget for the drawing board."""
 
 import os
-import re
 import sys
 
 from PyQt5.QtCore import Qt, QProcess, QByteArray, QTimer, QProcessEnvironment
@@ -13,7 +12,7 @@ from PyQt5.QtGui import (
     QTextCharFormat,
     QBrush,
 )
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPlainTextEdit
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPlainTextEdit, QFrame
 
 # Default terminal colors (dark background)
 ANSI_FG = [
@@ -48,12 +47,19 @@ class TerminalWidget(QWidget):
         self._text = QPlainTextEdit(self)
         self._text.setReadOnly(False)
         fixed_font = QFontDatabase.systemFont(QFontDatabase.FixedFont)
-        fixed_font.setPointSize(10)
+        fixed_font.setPointSize(11)
+        fixed_font.setStyleHint(QFont.TypeWriter)
         self._text.setFont(fixed_font)
         self._text.setStyleSheet(
             "background-color: #1e1e1e; color: #d4d4d4; "
             "selection-background-color: #264f78;"
         )
+        # Native shell-like layout: tab width 8, no extra doc margin
+        fm = self._text.fontMetrics()
+        char_width = fm.horizontalAdvance(" ") if hasattr(fm, "horizontalAdvance") else fm.width(" ")
+        self._text.setTabStopDistance(char_width * 8)
+        self._text.document().setDocumentMargin(0)
+        self._text.setFrameShape(QFrame.NoFrame)
         self._text.keyPressEvent = self._key_press_event
 
         layout = QVBoxLayout(self)
@@ -128,7 +134,7 @@ class TerminalWidget(QWidget):
             elif p == 5 or p == 6:
                 pass  # blink, no Qt equivalent
             elif p == 7:
-                self._current_char_format.setForeground(QBrush(DEFAULT_BG))
+                self._current_char_format.setForeground(DEFAULT_BG)
                 self._current_char_format.setBackground(QBrush(DEFAULT_FG))
             elif p == 22:
                 self._current_char_format.setFontWeight(0)
@@ -184,14 +190,16 @@ class TerminalWidget(QWidget):
                             parts = params_str.split(";")
                             params = []
                             for part in parts:
+                                part = part.lstrip("?")
                                 if part == "":
                                     params.append(0)
                                 else:
                                     try:
-                                        params.extend(int(x) for x in part.split("?"))
+                                        params.append(int(part))
                                     except ValueError:
                                         pass
-                            self._apply_sgr(params)
+                            if params:
+                                self._apply_sgr(params)
                 elif text[i + 1] == "]":
                     # OSC: consume until BEL or ST
                     i += 2
@@ -224,6 +232,8 @@ class TerminalWidget(QWidget):
             self._text.moveCursor(self._text.textCursor().End)
             for segment, fmt in self._parse_ansi_and_yield_segments(text):
                 if segment:
+                    # Normalize \r: no overwrite (avoids deleting prompt / garbled output)
+                    segment = segment.replace("\r\n", "\n").replace("\r", "\n")
                     self._text.setCurrentCharFormat(fmt)
                     self._text.insertPlainText(segment)
             self._text.moveCursor(self._text.textCursor().End)
@@ -244,13 +254,12 @@ class TerminalWidget(QWidget):
         key = event.key()
         text = event.text()
 
+        # PTY echoes input; we only send, no local echo, so no duplicate
         if key in (Qt.Key_Return, Qt.Key_Enter):
             self._send("\r\n")
-            self._echo("\n")
             return
         if key == Qt.Key_Backspace:
             self._send("\b")
-            self._backspace()
             return
         if key == Qt.Key_Delete:
             self._send("\x1b[3~")
@@ -275,26 +284,11 @@ class TerminalWidget(QWidget):
             return
         if key == Qt.Key_Tab:
             self._send("\t")
-            self._echo("\t")
             return
         if text:
             self._send(text)
-            self._echo(text)
             return
         super(QPlainTextEdit, self._text).keyPressEvent(event)
-
-    def _echo(self, s: str):
-        """Echo user input into the display (no TTY so shell doesn't echo)."""
-        self._text.moveCursor(self._text.textCursor().End)
-        self._text.insertPlainText(s)
-        self._text.moveCursor(self._text.textCursor().End)
-
-    def _backspace(self):
-        """Remove one character at cursor for backspace."""
-        cur = self._text.textCursor()
-        if cur.position() > 0:
-            cur.deletePreviousChar()
-            self._text.setTextCursor(cur)
 
     def _send(self, s: str):
         if self._process.state() == QProcess.Running:
