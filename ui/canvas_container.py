@@ -15,6 +15,7 @@ class CanvasContainer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMouseTracking(True)
+        self.setStyleSheet("background-color: #000000;")
         self._canvas = DrawingCanvas(self)
         self._canvas.zoom_changed.connect(self._on_zoom_changed)
         self._canvas.show()

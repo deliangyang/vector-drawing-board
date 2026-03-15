@@ -22,7 +22,7 @@ class DrawingCanvas(QWidget):
         self._zoom_factor: float = 1.0
 
         self._update_zoom_size()
-        self.setStyleSheet("background-color: #252526;")
+        self.setStyleSheet("background-color: #000000;")
         self.setAttribute(Qt.WA_StaticContents)
 
     def _update_zoom_size(self):
@@ -65,5 +65,5 @@ class DrawingCanvas(QWidget):
         logical_rect = QRectF(0, 0, CANVAS_LOGICAL_WIDTH, CANVAS_LOGICAL_HEIGHT)
         painter.save()
         painter.scale(self._zoom_factor, self._zoom_factor)
-        painter.fillRect(logical_rect, QBrush(QColor("#252526")))
+        painter.fillRect(logical_rect, QBrush(QColor("#000000")))
         painter.restore()

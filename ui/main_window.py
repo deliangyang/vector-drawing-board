@@ -35,7 +35,10 @@ class MainWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidget(self._container)
         scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background: #000000; }")
+        scroll.viewport().setStyleSheet("background: #000000;")
         self.setCentralWidget(scroll)
+        self.setStyleSheet("QMainWindow { background: #000000; }")
 
         self._build_menu()
         self._build_toolbar()
