@@ -1,6 +1,9 @@
 """Main window: terminal board only (no drawing)."""
 
-from PyQt5.QtCore import Qt
+import json
+import os
+
+from PyQt5.QtCore import Qt, QStandardPaths
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (
     QAction,
@@ -38,6 +41,55 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_status_bar()
         self._build_zoom_toolbar()
+
+        self._restore_or_new_terminal()
+
+    def _state_file(self):
+        """Path to saved session state (terminal layout + zoom)."""
+        dir_path = QStandardPaths.writableLocation(QStandardPaths.AppConfigLocation)
+        if dir_path and not os.path.isdir(dir_path):
+            try:
+                os.makedirs(dir_path, exist_ok=True)
+            except OSError:
+                pass
+        return os.path.join(dir_path, "state.json") if dir_path else ""
+
+    def _load_state(self):
+        """Load saved state; return dict with 'terminals' and 'zoom' or None."""
+        path = self._state_file()
+        if not path or not os.path.isfile(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def _save_state(self):
+        """Save terminal layout and zoom so we can restore on next launch."""
+        path = self._state_file()
+        if not path:
+            return
+        state = {
+            "zoom": self._canvas.zoom_factor(),
+            "terminals": self._container.get_terminal_layout(),
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2)
+        except OSError:
+            pass
+
+    def _restore_or_new_terminal(self):
+        """On startup: restore last session or create one new terminal."""
+        state = self._load_state()
+        if state:
+            zoom = state.get("zoom")
+            if zoom is not None and ZOOM_MIN <= zoom <= ZOOM_MAX:
+                self._canvas.set_zoom_factor(zoom)
+            self._container.restore_terminals(state.get("terminals") or [])
+        else:
+            self._container.add_terminal()
 
     def _build_menu(self):
         menu_bar = self.menuBar()
@@ -132,5 +184,6 @@ class MainWindow(QMainWindow):
         self._label_terminals.setText(f"Terminals: {count}")
 
     def closeEvent(self, event):
+        self._save_state()
         self._container.close_all_terminals()
         event.accept()

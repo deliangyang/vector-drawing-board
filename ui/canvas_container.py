@@ -55,18 +55,30 @@ class CanvasContainer(QWidget):
         # Keep canvas at top-left with its fixed size when container is resized by scroll area
         self._canvas.setGeometry(0, 0, self._canvas.width(), self._canvas.height())
 
-    def add_terminal(self):
-        """Add a new terminal card on the canvas with spaced grid layout."""
+    def get_terminal_layout(self):
+        """Return list of terminal rects in logical coords for persistence."""
+        return [
+            {"lx": t["lx"], "ly": t["ly"], "lw": t["lw"], "lh": t["lh"]}
+            for t in self._terminals
+        ]
+
+    def restore_terminals(self, layout_list):
+        """Create terminals at saved positions; if layout_list is empty, create one."""
+        if not layout_list:
+            self.add_terminal()
+            return
+        for rect in layout_list:
+            self._add_terminal_at(
+                rect.get("lx", 50),
+                rect.get("ly", 50),
+                rect.get("lw", 380),
+                rect.get("lh", 220),
+            )
+
+    def _add_terminal_at(self, lx: float, ly: float, lw: float, lh: float):
+        """Create one terminal card at the given logical rect."""
         self._terminal_counter += 1
         title = f"Terminal {self._terminal_counter}"
-        lw, lh = 380, 220
-        gap = 28
-        cols = 2
-        n = len(self._terminals)
-        col = n % cols
-        row = n // cols
-        lx = 50 + col * (lw + gap)
-        ly = 50 + row * (lh + gap)
         zoom = self._canvas.zoom_factor()
         card = TerminalCard(title, self)
         card.setGeometry(
@@ -87,6 +99,18 @@ class CanvasContainer(QWidget):
             "lh": lh,
         })
         self.terminal_count_changed.emit(len(self._terminals))
+
+    def add_terminal(self):
+        """Add a new terminal card on the canvas with spaced grid layout."""
+        lw, lh = 380, 220
+        gap = 28
+        cols = 2
+        n = len(self._terminals)
+        col = n % cols
+        row = n // cols
+        lx = 50 + col * (lw + gap)
+        ly = 50 + row * (lh + gap)
+        self._add_terminal_at(lx, ly, lw, lh)
 
     def _on_card_geometry_changed(self, rect: QRect):
         """Update stored logical rect from card's new geometry (in pixel coords)."""
