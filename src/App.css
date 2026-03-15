@@ -1,0 +1,258 @@
+/* ── Layout ─────────────────────────────────────────────── */
+.app-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: #1e293b;
+  color: #f8fafc;
+  flex-shrink: 0;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+
+.app-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.app-subtitle {
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Toolbar ─────────────────────────────────────────────── */
+.toolbar {
+  width: 200px;
+  min-width: 160px;
+  background: #1e293b;
+  border-right: 1px solid #334155;
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.toolbar-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  margin-bottom: 6px;
+}
+
+.toolbar-section {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Tool grid */
+.tool-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.tool-btn {
+  aspect-ratio: 1;
+  border: none;
+  background: #334155;
+  color: #e2e8f0;
+  border-radius: 6px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  line-height: 1;
+}
+
+.tool-btn:hover {
+  background: #475569;
+}
+
+.tool-btn.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+/* Color inputs */
+.color-input {
+  width: 100%;
+  height: 36px;
+  border: 2px solid #334155;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.fill-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.fill-row .color-input {
+  flex: 1;
+}
+
+.fill-toggle {
+  font-size: 0.7rem;
+  padding: 4px 7px;
+  border: 2px solid #334155;
+  border-radius: 6px;
+  background: #334155;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.fill-toggle.active {
+  background: #475569;
+  color: #e2e8f0;
+  border-color: #64748b;
+}
+
+/* Sliders */
+.slider {
+  width: 100%;
+  accent-color: #2563eb;
+  cursor: pointer;
+}
+
+/* Action buttons */
+.toolbar-actions {
+  gap: 6px;
+  margin-top: auto;
+}
+
+.action-btn {
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: #334155;
+  color: #e2e8f0;
+  transition: background 0.15s;
+  text-align: left;
+}
+
+.action-btn:hover:not(:disabled) {
+  background: #475569;
+}
+
+.action-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.action-btn.danger {
+  color: #fca5a5;
+}
+
+.action-btn.danger:hover:not(:disabled) {
+  background: #7f1d1d;
+  color: #fee2e2;
+}
+
+.action-btn.export {
+  background: #1d4ed8;
+  color: #dbeafe;
+}
+
+.action-btn.export:hover {
+  background: #2563eb;
+}
+
+/* ── Canvas area ─────────────────────────────────────────── */
+.canvas-container {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 16px;
+  background: #e2e8f0;
+}
+
+.drawing-canvas {
+  background: #ffffff;
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  display: block;
+  max-width: 100%;
+  touch-action: none;
+}
+
+/* ── Responsive / Mobile ─────────────────────────────────── */
+@media (max-width: 640px) {
+  .app-subtitle {
+    display: none;
+  }
+
+  .toolbar {
+    width: 100%;
+    min-width: unset;
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 8px;
+    gap: 8px;
+    border-right: none;
+    border-bottom: 1px solid #334155;
+    max-height: 160px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .toolbar-section {
+    min-width: 100px;
+  }
+
+  .tool-grid {
+    grid-template-columns: repeat(4, 32px);
+  }
+
+  .app-body {
+    flex-direction: column;
+  }
+
+  .canvas-container {
+    padding: 8px;
+  }
+
+  .toolbar-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin-top: 0;
+  }
+
+  .action-btn {
+    width: auto;
+    flex: 1 1 auto;
+  }
+}
