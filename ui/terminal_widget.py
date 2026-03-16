@@ -303,9 +303,30 @@ class TerminalWidget(QWidget):
             data = b"\x1b[3~"
         elif key == Qt.Key_Insert:
             data = b"\x1b[2~"
-        elif modifiers & Qt.ControlModifier and text:
-            # Ctrl+字母组合
-            if len(text) == 1:
+        elif modifiers & Qt.ControlModifier:
+            # Ctrl+字母组合 - 优先处理特定的键码
+            if key == Qt.Key_C:
+                data = b"\x03"  # Ctrl+C
+            elif key == Qt.Key_D:
+                data = b"\x04"  # Ctrl+D
+            elif key == Qt.Key_Z:
+                data = b"\x1a"  # Ctrl+Z
+            elif key == Qt.Key_L:
+                data = b"\x0c"  # Ctrl+L (clear screen)
+            elif key == Qt.Key_A:
+                data = b"\x01"  # Ctrl+A (行首)
+            elif key == Qt.Key_E:
+                data = b"\x05"  # Ctrl+E (行尾)
+            elif key == Qt.Key_K:
+                data = b"\x0b"  # Ctrl+K (删除到行尾)
+            elif key == Qt.Key_U:
+                data = b"\x15"  # Ctrl+U (删除整行)
+            elif key == Qt.Key_W:
+                data = b"\x17"  # Ctrl+W (删除前一个单词)
+            elif key == Qt.Key_R:
+                data = b"\x12"  # Ctrl+R (反向搜索)
+            elif text and len(text) == 1:
+                # 其他 Ctrl+字母组合
                 char = text[0].lower()
                 if 'a' <= char <= 'z':
                     # Ctrl+A = 1, Ctrl+B = 2, ..., Ctrl+Z = 26
