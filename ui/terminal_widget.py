@@ -119,6 +119,10 @@ class TerminalWidget(QWidget):
                 env["LINES"] = str(rows)
                 env["PS1"] = "$ "  # 简单的提示符
                 
+                # 禁用 fish shell 的终端能力查询，避免超时警告
+                env["fish_term_256color"] = "1"  # 告诉 fish 支持 256 色
+                env["fish_query_os_name"] = "0"  # 禁用 OS 名称查询
+                
                 try:
                     os.execve(shell, [shell, "-i"], env)
                 except Exception as e:
@@ -272,14 +276,18 @@ class TerminalWidget(QWidget):
             data = b"\x7f"
             if self._local_echo:
                 # 退格：删除前一个字符
+                self._text.setReadOnly(False)
                 cursor = self._text.textCursor()
                 cursor.movePosition(QTextCursor.End)
                 if not cursor.atBlockStart():
                     cursor.deletePreviousChar()
                 self._text.setTextCursor(cursor)
+                self._text.setReadOnly(True)
         elif key == Qt.Key_Tab:
             data = b"\t"
-            # Tab 不本地回显，等待服务器响应（可能是补全）
+            # Tab 可能触发补全，先本地显示
+            if self._local_echo:
+                display_char = "\t"
         elif key == Qt.Key_Escape:
             data = b"\x1b"
         elif key == Qt.Key_Up:
@@ -308,15 +316,21 @@ class TerminalWidget(QWidget):
                 # 发送中断信号
                 data = b"\x03"  # Ctrl+C (SIGINT)
                 if self._local_echo:
+                    self._text.setReadOnly(False)
                     self._text.insertPlainText("^C")
+                    self._text.setReadOnly(True)
             elif key == Qt.Key_D:
                 data = b"\x04"  # Ctrl+D
                 if self._local_echo:
+                    self._text.setReadOnly(False)
                     self._text.insertPlainText("^D")
+                    self._text.setReadOnly(True)
             elif key == Qt.Key_Z:
                 data = b"\x1a"  # Ctrl+Z
                 if self._local_echo:
+                    self._text.setReadOnly(False)
                     self._text.insertPlainText("^Z")
+                    self._text.setReadOnly(True)
             elif key == Qt.Key_L:
                 data = b"\x0c"  # Ctrl+L (clear screen)
             elif key == Qt.Key_A:
@@ -339,17 +353,25 @@ class TerminalWidget(QWidget):
                     data = bytes([ord(char) - ord('a') + 1])
                 elif char == ' ':
                     data = b"\x00"
-        elif text:
+        elif text and text.isprintable():
+            # 普通可打印字符
             data = text.encode("utf-8")
             if self._local_echo:
                 display_char = text
         
         # 本地回显（如果启用）
         if display_char:
-            self._text.moveCursor(QTextCursor.End)
+            # 临时禁用 read-only 以插入文本
+            self._text.setReadOnly(False)
+            cursor = self._text.textCursor()
+            cursor.movePosition(QTextCursor.End)
+            self._text.setTextCursor(cursor)
             self._text.insertPlainText(display_char)
-            self._text.moveCursor(QTextCursor.End)
+            cursor = self._text.textCursor()
+            cursor.movePosition(QTextCursor.End)
+            self._text.setTextCursor(cursor)
             self._text.ensureCursorVisible()
+            self._text.setReadOnly(True)  # 恢复 read-only
         
         if data:
             try:
@@ -490,6 +512,9 @@ class TerminalWidget(QWidget):
         if not text:
             return
             
+        # 临时禁用 read-only 以插入文本
+        self._text.setReadOnly(False)
+        
         # 处理回车和换行
         text = text.replace("\r\n", "\n")
         # 简单处理回车（\r）：移到行首
@@ -514,7 +539,9 @@ class TerminalWidget(QWidget):
         # 滚动到底部并立即更新显示
         self._text.moveCursor(QTextCursor.End)
         self._text.ensureCursorVisible()
-        self._text.update()  # 强制立即更新显示
+        
+        # 恢复 read-only
+        self._text.setReadOnly(True)
 
     # ------------------------------------------------------------------
     # 清理和关闭
