@@ -474,20 +474,21 @@ class TerminalWidget(QWidget):
                                         pass
                             if params:
                                 self._apply_sgr(params)
-                        elif letter in "ABCDEFGH":
-                            # 光标移动等控制序列，这里简单忽略
+                        elif letter == "H":
+                            # 光标移到开头 (Home)
+                            # 这里简单处理：移到文档开头
+                            # 注意：这在生成器中不直接操作光标，留给调用者处理
+                            pass
+                        elif letter in "ABCDEFG":
+                            # 其他光标移动控制序列，这里简单忽略
                             pass
                         elif letter == "J":
-                            # 清屏
-                            if params_str == "" or params_str == "0":
-                                # 清除从光标到屏幕末尾
-                                pass
-                            elif params_str == "2":
-                                # 清除整个屏幕
-                                self._text.clear()
+                            # 清屏控制序列
+                            # 注意：在生成器中标记清屏操作，由调用者实际执行
+                            yield ("__CLEAR_SCREEN__", None)
                         elif letter == "K":
-                            # 清除行
-                            pass
+                            # 清除行（从光标到行尾）
+                            yield ("__CLEAR_LINE__", None)
                 elif text[i + 1] == "]":
                     i += 2
                     while i < n:
@@ -515,26 +516,54 @@ class TerminalWidget(QWidget):
         # 临时禁用 read-only 以插入文本
         self._text.setReadOnly(False)
         
-        # 处理回车和换行
+        # 先将 \r\n 统一为 \n（Windows换行）
         text = text.replace("\r\n", "\n")
-        # 简单处理回车（\r）：移到行首
-        lines = text.split("\r")
         
-        for idx, line in enumerate(lines):
-            if idx > 0:
-                # 回车：移动光标到当前行开头
-                cursor = self._text.textCursor()
-                cursor.movePosition(QTextCursor.StartOfBlock, QTextCursor.MoveAnchor)
-                cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
-                cursor.removeSelectedText()
-                self._text.setTextCursor(cursor)
+        # 按 \r 和 \n 分割处理
+        i = 0
+        while i < len(text):
+            # 查找下一个控制字符
+            next_r = text.find("\r", i)
+            next_n = text.find("\n", i)
             
-            # 处理 ANSI 序列并插入文本
-            self._text.moveCursor(QTextCursor.End)
-            for segment, fmt in self._parse_ansi_and_yield_segments(line):
-                if segment:
-                    self._text.setCurrentCharFormat(fmt)
-                    self._text.insertPlainText(segment)
+            # 确定下一个分隔符位置
+            if next_r == -1 and next_n == -1:
+                # 没有更多控制字符，处理剩余文本
+                segment = text[i:]
+                self._insert_segment(segment)
+                break
+            elif next_r == -1:
+                # 只有换行
+                segment = text[i:next_n]
+                self._insert_segment(segment)
+                self._text.insertPlainText("\n")
+                i = next_n + 1
+            elif next_n == -1:
+                # 只有回车
+                segment = text[i:next_r]
+                self._insert_segment(segment)
+                # 回车：移到行首，准备覆盖
+                cursor = self._text.textCursor()
+                cursor.movePosition(QTextCursor.StartOfBlock)
+                self._text.setTextCursor(cursor)
+                i = next_r + 1
+            else:
+                # 都有，取最近的
+                if next_r < next_n:
+                    segment = text[i:next_r]
+                    self._insert_segment(segment)
+                    # 回车：移到行首并删除该行内容，准备覆盖
+                    cursor = self._text.textCursor()
+                    cursor.movePosition(QTextCursor.StartOfBlock)
+                    cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+                    cursor.removeSelectedText()
+                    self._text.setTextCursor(cursor)
+                    i = next_r + 1
+                else:
+                    segment = text[i:next_n]
+                    self._insert_segment(segment)
+                    self._text.insertPlainText("\n")
+                    i = next_n + 1
         
         # 滚动到底部并立即更新显示
         self._text.moveCursor(QTextCursor.End)
@@ -542,6 +571,26 @@ class TerminalWidget(QWidget):
         
         # 恢复 read-only
         self._text.setReadOnly(True)
+    
+    def _insert_segment(self, text: str):
+        """插入文本段，处理 ANSI 序列。"""
+        if not text:
+            return
+        
+        for segment, fmt in self._parse_ansi_and_yield_segments(text):
+            if segment == "__CLEAR_SCREEN__":
+                # 清屏命令
+                self._text.clear()
+                self._current_char_format = self._default_char_format()
+            elif segment == "__CLEAR_LINE__":
+                # 清除当前行（从光标到行尾）
+                cursor = self._text.textCursor()
+                cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+                cursor.removeSelectedText()
+                self._text.setTextCursor(cursor)
+            elif segment:
+                self._text.setCurrentCharFormat(fmt)
+                self._text.insertPlainText(segment)
 
     # ------------------------------------------------------------------
     # 清理和关闭
