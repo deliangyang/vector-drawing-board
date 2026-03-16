@@ -306,7 +306,8 @@ class TerminalWidget(QWidget):
         elif modifiers & Qt.ControlModifier:
             # Ctrl+字母组合 - 优先处理特定的键码
             if key == Qt.Key_C:
-                data = b"\x03"  # Ctrl+C
+                # 发送中断信号
+                data = b"\x03"  # Ctrl+C (SIGINT)
             elif key == Qt.Key_D:
                 data = b"\x04"  # Ctrl+D
             elif key == Qt.Key_Z:
