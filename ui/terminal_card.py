@@ -78,6 +78,10 @@ class TerminalCard(QFrame):
     def terminal_widget(self):
         return self._terminal
 
+    def set_zoom(self, zoom: float):
+        """通知内部终端 widget 更新缩放。"""
+        self._terminal.set_zoom(zoom)
+
     def _on_close(self):
         self.closed.emit()
         self.close()

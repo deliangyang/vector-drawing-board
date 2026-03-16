@@ -9,7 +9,6 @@ from PyQt5.QtWidgets import (
     QAction,
     QLabel,
     QMainWindow,
-    QScrollArea,
     QSpinBox,
     QStatusBar,
     QToolBar,
@@ -17,6 +16,7 @@ from PyQt5.QtWidgets import (
 
 from core.drawing_canvas import ZOOM_MIN, ZOOM_MAX, ZOOM_STEP
 from ui.canvas_container import CanvasContainer
+from ui.draggable_scroll_area import DraggableScrollArea
 
 
 class MainWindow(QMainWindow):
@@ -32,11 +32,12 @@ class MainWindow(QMainWindow):
         self._canvas.zoom_changed.connect(self._on_canvas_zoom_changed)
         self._container.terminal_count_changed.connect(self._on_terminal_count_changed)
 
-        scroll = QScrollArea()
+        scroll = DraggableScrollArea()
         scroll.setWidget(self._container)
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { background: #000000; }")
         scroll.viewport().setStyleSheet("background: #000000;")
+        scroll.setFocusPolicy(Qt.StrongFocus)  # Enable keyboard events for Space key
         self.setCentralWidget(scroll)
         self.setStyleSheet("QMainWindow { background: #000000; }")
 

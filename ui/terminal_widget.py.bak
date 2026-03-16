@@ -6,7 +6,8 @@
 import os
 import sys
 import pty
-import signal
+import select
+import subprocess
 import struct
 import fcntl
 import termios
@@ -101,42 +102,39 @@ class TerminalWidget(QWidget):
         # 获取终端大小
         cols, rows = self._get_terminal_size()
         
-        try:
-            # 创建 PTY
-            self._pid, self._master_fd = pty.fork()
+        # 创建 PTY
+        self._pid, self._master_fd = pty.fork()
+        
+        if self._pid == 0:
+            # 子进程：执行 shell
+            shell = os.environ.get("SHELL", "/bin/bash")
+            if not os.path.isfile(shell):
+                shell = "/bin/bash"
             
-            if self._pid == 0:
-                # 子进程：执行 shell
-                shell = os.environ.get("SHELL", "/bin/bash")
-                if not os.path.isfile(shell):
-                    shell = "/bin/bash"
-                
-                # 设置环境变量
-                env = os.environ.copy()
-                env["TERM"] = "xterm-256color"
-                env["COLUMNS"] = str(cols)
-                env["LINES"] = str(rows)
-                
-                try:
-                    os.execve(shell, [shell, "-l"], env)
-                except Exception as e:
-                    print(f"Failed to start shell: {e}", file=sys.stderr)
-                    sys.exit(1)
-            else:
-                # 父进程：设置 PTY
-                self._set_terminal_size(cols, rows)
-                
-                # 设置为非阻塞模式
-                flags = fcntl.fcntl(self._master_fd, fcntl.F_GETFL)
-                fcntl.fcntl(self._master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-                
-                # 使用 QSocketNotifier 监听 PTY 输出
-                self._notifier = QSocketNotifier(
-                    self._master_fd, QSocketNotifier.Read, self
-                )
-                self._notifier.activated.connect(self._read_output)
-        except Exception as e:
-            self._text.setPlainText(f"Error starting shell: {e}\n")
+            # 设置环境变量
+            env = os.environ.copy()
+            env["TERM"] = "xterm-256color"
+            env["COLUMNS"] = str(cols)
+            env["LINES"] = str(rows)
+            
+            try:
+                os.execve(shell, [shell, "-l"], env)
+            except Exception as e:
+                print(f"Failed to start shell: {e}", file=sys.stderr)
+                sys.exit(1)
+        else:
+            # 父进程：设置 PTY
+            self._set_terminal_size(cols, rows)
+            
+            # 设置为非阻塞模式
+            flags = fcntl.fcntl(self._master_fd, fcntl.F_GETFL)
+            fcntl.fcntl(self._master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+            
+            # 使用 QSocketNotifier 监听 PTY 输出
+            self._notifier = QSocketNotifier(
+                self._master_fd, QSocketNotifier.Read, self
+            )
+            self._notifier.activated.connect(self._read_output)
 
     def _get_terminal_size(self):
         """根据窗口大小计算终端的列数和行数。"""
@@ -451,40 +449,208 @@ class TerminalWidget(QWidget):
         self._text.moveCursor(QTextCursor.End)
         self._text.ensureCursorVisible()
 
+    def _default_char_format(self) -> QTextCharFormat:
+        fmt = QTextCharFormat()
+        fmt.setForeground(DEFAULT_FG)
+        fmt.setBackground(QBrush(DEFAULT_BG))
+        return fmt
+
+    def _apply_sgr(self, params: list) -> None:
+        """根据 SGR 参数更新当前格式（颜色、加粗等）。"""
+        if not params:
+            params = [0]
+        i = 0
+        while i < len(params):
+            p = params[i]
+            if p == 0:
+                self._current_char_format = self._default_char_format()
+            elif p == 1:
+                self._current_char_format.setFontWeight(99)
+            elif p == 2:
+                self._current_char_format.setFontWeight(0)
+            elif p == 3:
+                self._current_char_format.setFontItalic(True)
+            elif p == 4:
+                self._current_char_format.setFontUnderline(True)
+            elif p == 7:
+                self._current_char_format.setForeground(DEFAULT_BG)
+                self._current_char_format.setBackground(QBrush(DEFAULT_FG))
+            elif p == 22:
+                self._current_char_format.setFontWeight(0)
+            elif p == 23:
+                self._current_char_format.setFontItalic(False)
+            elif p == 24:
+                self._current_char_format.setFontUnderline(False)
+            elif p == 27:
+                self._current_char_format.setForeground(DEFAULT_FG)
+                self._current_char_format.setBackground(QBrush(DEFAULT_BG))
+            elif 30 <= p <= 37:
+                self._current_char_format.setForeground(ANSI_FG[p - 30])
+            elif p == 39:
+                self._current_char_format.setForeground(DEFAULT_FG)
+            elif 40 <= p <= 47:
+                self._current_char_format.setBackground(QBrush(ANSI_BG[p - 40]))
+            elif p == 49:
+                self._current_char_format.setBackground(QBrush(DEFAULT_BG))
+            elif 90 <= p <= 97:
+                self._current_char_format.setForeground(ANSI_FG_BRIGHT[p - 90])
+            elif 100 <= p <= 107:
+                self._current_char_format.setBackground(QBrush(ANSI_FG_BRIGHT[p - 100]))
+            i += 1
+
+    def _parse_ansi_and_yield_segments(self, text: str):
+        """解析 ANSI 转义，yield (纯文本, QTextCharFormat) 片段。"""
+        ESC = "\x1b"
+        i = 0
+        buf = []
+        n = len(text)
+
+        def flush():
+            nonlocal buf
+            if buf:
+                segment = "".join(buf)
+                buf = []
+                yield segment, QTextCharFormat(self._current_char_format)
+
+        while i < n:
+            if text[i] == ESC and i + 1 < n:
+                yield from flush()
+                if text[i + 1] == "[":
+                    i += 2
+                    start = i
+                    while i < n and text[i] not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@`":
+                        i += 1
+                    if i < n:
+                        letter = text[i]
+                        params_str = text[start:i]
+                        i += 1
+                        if letter == "m":
+                            parts = params_str.split(";")
+                            params = []
+                            for part in parts:
+                                part = part.lstrip("?")
+                                if part == "":
+                                    params.append(0)
+                                else:
+                                    try:
+                                        params.append(int(part))
+                                    except ValueError:
+                                        pass
+                            if params:
+                                self._apply_sgr(params)
+                elif text[i + 1] == "]":
+                    i += 2
+                    while i < n:
+                        if text[i] == "\x07":
+                            i += 1
+                            break
+                        if text[i] == ESC and i + 1 < n and text[i + 1] == "\\":
+                            i += 2
+                            break
+                        i += 1
+                elif text[i + 1] in "()":
+                    i += 3
+                else:
+                    i += 2
+                continue
+            buf.append(text[i])
+            i += 1
+        yield from flush()
+
+    def _append_ansi(self, text: str):
+        """追加带 ANSI 颜色/加粗等的输出。"""
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        self._output.moveCursor(self._output.textCursor().End)
+        for segment, fmt in self._parse_ansi_and_yield_segments(text):
+            if segment:
+                self._output.setCurrentCharFormat(fmt)
+                self._output.insertPlainText(segment)
+        self._output.moveCursor(self._output.textCursor().End)
+
+    def _prompt(self) -> str:
+        base = os.path.basename(self._cwd) or self._cwd
+        return f"{base}$ "
+
     # ------------------------------------------------------------------
-    # 清理和关闭
+    # Input handling
     # ------------------------------------------------------------------
 
-    def _cleanup(self):
-        """清理 PTY 和子进程。"""
-        if self._notifier:
-            self._notifier.setEnabled(False)
-            self._notifier.deleteLater()
-            self._notifier = None
-        
-        if self._master_fd is not None:
-            try:
-                os.close(self._master_fd)
-            except OSError:
-                pass
-            self._master_fd = None
-        
-        if self._pid:
-            try:
-                os.kill(self._pid, signal.SIGTERM)
-                os.waitpid(self._pid, 0)
-            except (OSError, ChildProcessError):
-                pass
-            self._pid = None
+    def _on_return_pressed(self):
+        line = self._input.text()
+        self._input.clear()
+        prompt = self._prompt()
+        self._append_line(prompt + line)
+        line = line.strip()
+        if not line:
+            return
 
-    def kill_process(self):
-        """强制杀死 shell 进程。"""
-        self._cleanup()
+        # Handle built-in 'cd' so cwd 能保持
+        if line.startswith("cd"):
+            self._handle_cd(line)
+            return
+
+        self._run_command(line)
+
+    def _handle_cd(self, line: str):
+        parts = line.split(maxsplit=1)
+        if len(parts) == 1 or not parts[1]:
+            target = os.path.expanduser("~")
+        else:
+            target = os.path.expanduser(parts[1])
+            if not os.path.isabs(target):
+                target = os.path.join(self._cwd, target)
+
+        if not os.path.isdir(target):
+            self._append_line(f"cd: no such directory: {target}")
+            return
+        self._cwd = os.path.abspath(target)
+        self._append_line(f"(cwd) {self._cwd}")
+
+    # ------------------------------------------------------------------
+    # Command execution (per-line QProcess)
+    # ------------------------------------------------------------------
+
+    def _run_command(self, line: str):
+        proc = QProcess(self)
+        proc.setProcessChannelMode(QProcess.MergedChannels)
+        proc.setWorkingDirectory(self._cwd)
+
+        def on_ready():
+            data = proc.readAllStandardOutput()
+            if not data:
+                return
+            try:
+                text = bytes(data).decode("utf-8", errors="replace")
+            except Exception:
+                text = str(data)
+            self._append_ansi(text)
+
+        def on_finished(code, status):
+            if code != 0:
+                self._append_line(f"[exit {code}]")
+            proc.deleteLater()
+
+        proc.readyReadStandardOutput.connect(on_ready)
+        proc.finished.connect(on_finished)
+
+        if sys.platform == "win32":
+            # Run via cmd /C
+            proc.start("cmd.exe", ["/C", line])
+        else:
+            # Use user's shell if available; fallback to /bin/bash
+            shell = os.environ.get("SHELL", "/bin/bash")
+            if not os.path.isfile(shell):
+                shell = "/bin/bash"
+            proc.start(shell, ["-lc", line])
+
+    # ------------------------------------------------------------------
+    # QWidget
+    # ------------------------------------------------------------------
 
     def showEvent(self, event):
         super().showEvent(event)
-        QTimer.singleShot(0, self._text.setFocus)
+        QTimer.singleShot(0, self._input.setFocus)
 
     def closeEvent(self, event):
-        self._cleanup()
+        # 所有 per-command QProcess 都有我们作为 parent，Qt 会自动清理
         super().closeEvent(event)

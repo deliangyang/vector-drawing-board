@@ -73,6 +73,10 @@ class CanvasContainer(QWidget):
 
     def _on_zoom_changed(self, zoom: float):
         self._sync_size_from_canvas()
+        # 通知所有终端卡片更新字体大小
+        for t in self._terminals:
+            card = t["card"]
+            card.set_zoom(zoom)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -111,6 +115,7 @@ class CanvasContainer(QWidget):
             int(lw * zoom),
             int(lh * zoom),
         )
+        card.set_zoom(zoom)  # 设置初始缩放
         card.geometry_changed.connect(self._on_card_geometry_changed)
         card.closed.connect(self._on_card_closed)
         card.show()
