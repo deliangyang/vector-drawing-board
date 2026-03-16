@@ -55,8 +55,7 @@ class TerminalWidget(QWidget):
         self._master_fd = None
         self._pid = None
         self._notifier = None
-        self._local_echo = False  # 初始禁用本地回显，等待 PTY 回显
-        self._last_output_time = 0  # 上次收到输出的时间
+        self._local_echo = True  # 启用本地回显
 
         # --- Terminal display area ---
         self._text = QPlainTextEdit(self)
@@ -103,9 +102,6 @@ class TerminalWidget(QWidget):
         # 获取终端大小
         cols, rows = self._get_terminal_size()
         
-        import time
-        self._last_output_time = time.time()  # 初始化时间戳
-        
         try:
             # 创建 PTY
             self._pid, self._master_fd = pty.fork()
@@ -131,6 +127,15 @@ class TerminalWidget(QWidget):
             else:
                 # 父进程：设置 PTY
                 self._set_terminal_size(cols, rows)
+                
+                # 禁用 PTY 的 echo，避免双重回显
+                try:
+                    attrs = termios.tcgetattr(self._master_fd)
+                    # 禁用所有的 echo 标志
+                    attrs[3] = attrs[3] & ~(termios.ECHO | termios.ECHOE | termios.ECHOK | termios.ECHONL)
+                    termios.tcsetattr(self._master_fd, termios.TCSANOW, attrs)
+                except Exception as e:
+                    print(f"Warning: Could not disable PTY echo: {e}", file=sys.stderr)
                 
                 # 设置为非阻塞模式
                 flags = fcntl.fcntl(self._master_fd, fcntl.F_GETFL)
@@ -209,25 +214,18 @@ class TerminalWidget(QWidget):
         
         try:
             # 读取所有可用数据
-            got_data = False
             while True:
                 try:
                     data = os.read(self._master_fd, 4096)
                     if not data:
                         break
                     self._buffer += data
-                    got_data = True
                 except BlockingIOError:
                     break
                 except OSError:
                     # PTY 已关闭
                     self._cleanup()
                     return
-            
-            # 如果收到了数据，标记为已有输出
-            if got_data:
-                import time
-                self._last_output_time = time.time()
             
             # 处理缓冲区中的数据
             if self._buffer:
@@ -275,9 +273,10 @@ class TerminalWidget(QWidget):
             if self._local_echo:
                 # 退格：删除前一个字符
                 cursor = self._text.textCursor()
-                if not cursor.atStart():
+                cursor.movePosition(QTextCursor.End)
+                if not cursor.atBlockStart():
                     cursor.deletePreviousChar()
-                    self._text.setTextCursor(cursor)
+                self._text.setTextCursor(cursor)
         elif key == Qt.Key_Tab:
             data = b"\t"
             # Tab 不本地回显，等待服务器响应（可能是补全）
@@ -308,10 +307,16 @@ class TerminalWidget(QWidget):
             if key == Qt.Key_C:
                 # 发送中断信号
                 data = b"\x03"  # Ctrl+C (SIGINT)
+                if self._local_echo:
+                    self._text.insertPlainText("^C")
             elif key == Qt.Key_D:
                 data = b"\x04"  # Ctrl+D
+                if self._local_echo:
+                    self._text.insertPlainText("^D")
             elif key == Qt.Key_Z:
                 data = b"\x1a"  # Ctrl+Z
+                if self._local_echo:
+                    self._text.insertPlainText("^Z")
             elif key == Qt.Key_L:
                 data = b"\x0c"  # Ctrl+L (clear screen)
             elif key == Qt.Key_A:
@@ -348,22 +353,9 @@ class TerminalWidget(QWidget):
         
         if data:
             try:
-                import time
-                before_write = time.time()
                 os.write(self._master_fd, data)
-                
-                # 等待一小段时间看是否有回显
-                QTimer.singleShot(50, self._read_output)
-                
-                # 如果是普通字符输入且没有启用本地回显，检查是否需要启用
-                if display_char and not self._local_echo:
-                    def check_echo():
-                        # 如果 100ms 内没有收到任何输出，启用本地回显
-                        if time.time() - before_write > 0.1 and time.time() - self._last_output_time > 0.1:
-                            self._local_echo = True
-                            self._text.insertPlainText("[启用本地回显]\n")
-                    QTimer.singleShot(100, check_echo)
-                    
+                # 立即尝试读取 shell 输出
+                QTimer.singleShot(10, self._read_output)
             except (OSError, BrokenPipeError):
                 self._cleanup()
 
