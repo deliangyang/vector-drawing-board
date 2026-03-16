@@ -55,6 +55,8 @@ class TerminalWidget(QWidget):
         self._master_fd = None
         self._pid = None
         self._notifier = None
+        self._local_echo = False  # 初始禁用本地回显，等待 PTY 回显
+        self._last_output_time = 0  # 上次收到输出的时间
 
         # --- Terminal display area ---
         self._text = QPlainTextEdit(self)
@@ -101,6 +103,9 @@ class TerminalWidget(QWidget):
         # 获取终端大小
         cols, rows = self._get_terminal_size()
         
+        import time
+        self._last_output_time = time.time()  # 初始化时间戳
+        
         try:
             # 创建 PTY
             self._pid, self._master_fd = pty.fork()
@@ -116,9 +121,10 @@ class TerminalWidget(QWidget):
                 env["TERM"] = "xterm-256color"
                 env["COLUMNS"] = str(cols)
                 env["LINES"] = str(rows)
+                env["PS1"] = "$ "  # 简单的提示符
                 
                 try:
-                    os.execve(shell, [shell, "-l"], env)
+                    os.execve(shell, [shell, "-i"], env)
                 except Exception as e:
                     print(f"Failed to start shell: {e}", file=sys.stderr)
                     sys.exit(1)
@@ -203,18 +209,25 @@ class TerminalWidget(QWidget):
         
         try:
             # 读取所有可用数据
+            got_data = False
             while True:
                 try:
                     data = os.read(self._master_fd, 4096)
                     if not data:
                         break
                     self._buffer += data
+                    got_data = True
                 except BlockingIOError:
                     break
                 except OSError:
                     # PTY 已关闭
                     self._cleanup()
                     return
+            
+            # 如果收到了数据，标记为已有输出
+            if got_data:
+                import time
+                self._last_output_time = time.time()
             
             # 处理缓冲区中的数据
             if self._buffer:
@@ -251,13 +264,23 @@ class TerminalWidget(QWidget):
         
         # 特殊键处理
         data = None
+        display_char = None  # 用于本地回显的字符
         
         if key == Qt.Key_Return or key == Qt.Key_Enter:
             data = b"\r"
+            if self._local_echo:
+                display_char = "\n"
         elif key == Qt.Key_Backspace:
             data = b"\x7f"
+            if self._local_echo:
+                # 退格：删除前一个字符
+                cursor = self._text.textCursor()
+                if not cursor.atStart():
+                    cursor.deletePreviousChar()
+                    self._text.setTextCursor(cursor)
         elif key == Qt.Key_Tab:
             data = b"\t"
+            # Tab 不本地回显，等待服务器响应（可能是补全）
         elif key == Qt.Key_Escape:
             data = b"\x1b"
         elif key == Qt.Key_Up:
@@ -291,10 +314,34 @@ class TerminalWidget(QWidget):
                     data = b"\x00"
         elif text:
             data = text.encode("utf-8")
+            if self._local_echo:
+                display_char = text
+        
+        # 本地回显（如果启用）
+        if display_char:
+            self._text.moveCursor(QTextCursor.End)
+            self._text.insertPlainText(display_char)
+            self._text.moveCursor(QTextCursor.End)
+            self._text.ensureCursorVisible()
         
         if data:
             try:
+                import time
+                before_write = time.time()
                 os.write(self._master_fd, data)
+                
+                # 等待一小段时间看是否有回显
+                QTimer.singleShot(50, self._read_output)
+                
+                # 如果是普通字符输入且没有启用本地回显，检查是否需要启用
+                if display_char and not self._local_echo:
+                    def check_echo():
+                        # 如果 100ms 内没有收到任何输出，启用本地回显
+                        if time.time() - before_write > 0.1 and time.time() - self._last_output_time > 0.1:
+                            self._local_echo = True
+                            self._text.insertPlainText("[启用本地回显]\n")
+                    QTimer.singleShot(100, check_echo)
+                    
             except (OSError, BrokenPipeError):
                 self._cleanup()
 
@@ -426,6 +473,9 @@ class TerminalWidget(QWidget):
 
     def _append_ansi(self, text: str):
         """追加带 ANSI 颜色/加粗等的输出。"""
+        if not text:
+            return
+            
         # 处理回车和换行
         text = text.replace("\r\n", "\n")
         # 简单处理回车（\r）：移到行首
@@ -447,9 +497,10 @@ class TerminalWidget(QWidget):
                     self._text.setCurrentCharFormat(fmt)
                     self._text.insertPlainText(segment)
         
-        # 滚动到底部
+        # 滚动到底部并立即更新显示
         self._text.moveCursor(QTextCursor.End)
         self._text.ensureCursorVisible()
+        self._text.update()  # 强制立即更新显示
 
     # ------------------------------------------------------------------
     # 清理和关闭
