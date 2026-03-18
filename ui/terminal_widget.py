@@ -107,9 +107,26 @@ class TerminalWidget(QWidget):
         self._render_timer.setSingleShot(True)
         self._render_timer.timeout.connect(self._render_screen)
         self._pending_render = False
+        
+        # 初始工作目录
+        self._initial_cwd = None
 
         # 启动 shell
         QTimer.singleShot(100, self._start_shell)
+
+    def set_initial_cwd(self, cwd: str):
+        """设置 shell 启动时的初始工作目录。"""
+        self._initial_cwd = cwd
+    
+    def get_current_cwd(self) -> str:
+        """获取 shell 进程的当前工作目录。"""
+        if self._pid is None:
+            return os.getcwd()
+        try:
+            # 通过 /proc 读取进程的当前目录
+            return os.readlink(f"/proc/{self._pid}/cwd")
+        except (OSError, FileNotFoundError):
+            return os.getcwd()
 
     def _start_shell(self):
         """启动真正的 shell 进程（通过 PTY）。"""
@@ -143,6 +160,13 @@ class TerminalWidget(QWidget):
                 # 禁用 fish shell 的终端能力查询，避免超时警告
                 env["fish_term_256color"] = "1"
                 env["fish_query_os_name"] = "0"
+                
+                # 切换到初始工作目录（如果指定）
+                if self._initial_cwd and os.path.isdir(self._initial_cwd):
+                    try:
+                        os.chdir(self._initial_cwd)
+                    except OSError:
+                        pass
                 
                 try:
                     os.execve(shell, [shell, "-i"], env)

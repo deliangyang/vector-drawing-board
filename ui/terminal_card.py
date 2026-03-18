@@ -77,6 +77,14 @@ class TerminalCard(QFrame):
 
     def terminal_widget(self):
         return self._terminal
+    
+    def get_current_cwd(self) -> str:
+        """获取终端的当前工作目录。"""
+        return self._terminal.get_current_cwd()
+    
+    def set_initial_cwd(self, cwd: str):
+        """设置终端的初始工作目录。"""
+        self._terminal.set_initial_cwd(cwd)
 
     def set_zoom(self, zoom: float):
         """通知内部终端 widget 更新缩放。"""

@@ -9,7 +9,7 @@ A cross-platform Python desktop application for managing multiple terminal insta
 - **Photoshop-style Navigation**: Pan canvas with Space+Drag or H key (hand tool)
 - **Zoom Control**: Zoom in/out with Ctrl+Scroll or keyboard shortcuts
 - **Real Terminal Emulation**: Full PTY support with ANSI color and interactive programs
-- **Persistent Layout**: Automatically saves and restores terminal positions and zoom level
+- **Persistent Layout**: Automatically saves and restores terminal positions, zoom level, and working directories
 - **Draggable Terminals**: Move and resize terminal windows on the canvas
 
 ## Canvas Navigation (Photoshop-style)
@@ -68,6 +68,8 @@ python main.py
 ## Tips
 
 - The canvas automatically expands as you add terminals
-- Terminal positions and zoom level are saved automatically
+- Terminal positions, zoom level, and working directories are saved automatically
+- Each terminal remembers its last directory when you close the app
 - Use Space+Drag for quick canvas panning (like in Photoshop)
 - Press H to switch to hand tool mode for continuous panning
+- Window opens maximized by default for best experience

@@ -1,5 +1,7 @@
 """Container that holds the drawing canvas and terminal cards on the canvas."""
 
+import os
+
 from PyQt5.QtCore import QRect, Qt, pyqtSignal
 from PyQt5.QtWidgets import QWidget, QSizePolicy
 
@@ -86,7 +88,13 @@ class CanvasContainer(QWidget):
     def get_terminal_layout(self):
         """Return list of terminal rects in logical coords for persistence."""
         return [
-            {"lx": t["lx"], "ly": t["ly"], "lw": t["lw"], "lh": t["lh"]}
+            {
+                "lx": t["lx"], 
+                "ly": t["ly"], 
+                "lw": t["lw"], 
+                "lh": t["lh"],
+                "cwd": t["card"].get_current_cwd()
+            }
             for t in self._terminals
         ]
 
@@ -96,19 +104,26 @@ class CanvasContainer(QWidget):
             self.add_terminal()
             return
         for rect in layout_list:
+            cwd = rect.get("cwd")
             self._add_terminal_at(
                 rect.get("lx", 50),
                 rect.get("ly", 50),
                 rect.get("lw", 380),
                 rect.get("lh", 220),
+                cwd=cwd,
             )
 
-    def _add_terminal_at(self, lx: float, ly: float, lw: float, lh: float):
+    def _add_terminal_at(self, lx: float, ly: float, lw: float, lh: float, cwd: str = None):
         """Create one terminal card at the given logical rect."""
         self._terminal_counter += 1
         title = f"Terminal {self._terminal_counter}"
         zoom = self._canvas.zoom_factor()
         card = TerminalCard(title, self)
+        
+        # 设置初始工作目录（如果提供）
+        if cwd and os.path.isdir(cwd):
+            card.set_initial_cwd(cwd)
+        
         card.setGeometry(
             int(lx * zoom),
             int(ly * zoom),
