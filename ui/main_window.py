@@ -26,7 +26,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Terminal Board")
-        self.resize(1000, 700)
+        
+        # 默认全屏显示
+        self.showMaximized()
 
         self._container = CanvasContainer()
         self._canvas = self._container.canvas

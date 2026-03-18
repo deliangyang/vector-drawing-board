@@ -101,6 +101,12 @@ class TerminalWidget(QWidget):
         
         # 缓冲区用于存储不完整的数据
         self._buffer = b""
+        
+        # 渲染节流定时器
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.timeout.connect(self._render_screen)
+        self._pending_render = False
 
         # 启动 shell
         QTimer.singleShot(100, self._start_shell)
@@ -248,8 +254,9 @@ class TerminalWidget(QWidget):
                 self._stream.feed(self._buffer)
                 self._buffer = b""
                 
-                # 渲染屏幕
-                self._render_screen()
+                # 使用节流渲染（16ms ≈ 60fps）
+                if not self._render_timer.isActive():
+                    self._render_timer.start(16)
         except Exception as e:
             print(f"Error reading output: {e}", file=sys.stderr)
 
