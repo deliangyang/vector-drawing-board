@@ -14,6 +14,13 @@ class CanvasContainer(QWidget):
 
     terminal_count_changed = pyqtSignal(int)
 
+    default_width = 500
+    default_height = 300
+
+    default_gap = 16
+
+    default_cols = 3
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMouseTracking(True)
@@ -147,9 +154,9 @@ class CanvasContainer(QWidget):
 
     def add_terminal(self):
         """Add a new terminal card on the canvas with spaced grid layout."""
-        lw, lh = 380, 220
-        gap = 28
-        cols = 2
+        lw, lh = self.default_width, self.default_height
+        gap = self.default_gap
+        cols = self.default_cols
         n = len(self._terminals)
         col = n % cols
         row = n // cols
@@ -161,9 +168,9 @@ class CanvasContainer(QWidget):
         """Re-layout all existing terminals into a neat grid from top-left."""
         if not self._terminals:
             return
-        lw, lh = 380, 220
-        gap = 28
-        cols = 2
+        lw, lh = self.default_width, self.default_height
+        gap = self.default_gap
+        cols = self.default_cols
         zoom = self._canvas.zoom_factor()
         for index, t in enumerate(self._terminals):
             col = index % cols
