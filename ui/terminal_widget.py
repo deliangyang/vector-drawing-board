@@ -28,6 +28,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QPlainTextEdit,
     QFrame,
+    QApplication,
 )
 
 # ANSI 颜色映射
@@ -415,6 +416,12 @@ class TerminalWidget(QWidget):
                 data = b"\x17"  # Ctrl+W (删除前一个单词)
             elif key == Qt.Key_R:
                 data = b"\x12"  # Ctrl+R (反向搜索)
+            elif key == Qt.Key_V:
+                # Ctrl+V 或 Ctrl+Shift+V：粘贴剪贴板内容
+                clipboard = QApplication.clipboard()
+                text = clipboard.text()
+                if text:
+                    data = text.encode("utf-8")
             elif text and len(text) == 1:
                 # 其他 Ctrl+字母组合
                 char = text[0].lower()
