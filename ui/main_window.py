@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
     QAction,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QSpinBox,
     QStatusBar,
     QToolBar,
@@ -130,6 +131,12 @@ class MainWindow(QMainWindow):
         act_relayout.setShortcut(QKeySequence("Ctrl+Shift+L"))
         act_relayout.triggered.connect(self._container.relayout_terminals)
         view_menu.addAction(act_relayout)
+        
+        # Help menu
+        help_menu = menu_bar.addMenu("&Help")
+        act_shortcuts = QAction("&Keyboard Shortcuts", self)
+        act_shortcuts.triggered.connect(self._show_shortcuts)
+        help_menu.addAction(act_shortcuts)
 
     def _build_toolbar(self):
         toolbar = QToolBar("Main", self)
@@ -181,6 +188,42 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self._status_bar)
         self._label_terminals = QLabel("Terminals: 0")
         self._status_bar.addWidget(self._label_terminals, 1)
+        
+        # 添加平移提示
+        pan_hint = QLabel("  💡 Tip: Space+Drag or H key to pan canvas | Middle Click to pan")
+        pan_hint.setStyleSheet("color: #888;")
+        self._status_bar.addPermanentWidget(pan_hint)
+    
+    def _show_shortcuts(self):
+        """显示键盘快捷键帮助对话框。"""
+        shortcuts_text = """
+<h3>画布导航 (Canvas Navigation)</h3>
+<table>
+<tr><td><b>Space + 鼠标拖拽</b></td><td>平移画布 (Pan canvas)</td></tr>
+<tr><td><b>H 键</b></td><td>切换手形工具 (Toggle hand tool)</td></tr>
+<tr><td><b>中键拖拽</b></td><td>平移画布 (Pan canvas)</td></tr>
+<tr><td><b>Ctrl + 滚轮</b></td><td>缩放画布 (Zoom canvas)</td></tr>
+<tr><td><b>Ctrl + +</b></td><td>放大 (Zoom in)</td></tr>
+<tr><td><b>Ctrl + -</b></td><td>缩小 (Zoom out)</td></tr>
+<tr><td><b>Ctrl + 0</b></td><td>重置为 100% (Reset to 100%)</td></tr>
+</table>
+
+<h3>终端操作 (Terminal Operations)</h3>
+<table>
+<tr><td><b>Ctrl + Shift + T</b></td><td>添加终端 (Add terminal)</td></tr>
+<tr><td><b>Ctrl + Shift + L</b></td><td>重新布局终端 (Relayout terminals)</td></tr>
+</table>
+
+<h3>应用程序 (Application)</h3>
+<table>
+<tr><td><b>Ctrl + Q</b></td><td>退出 (Quit)</td></tr>
+</table>
+        """
+        QMessageBox.information(
+            self,
+            "Keyboard Shortcuts",
+            shortcuts_text
+        )
 
     def _on_zoom_spin_changed(self, value: int):
         factor = value / 100.0
