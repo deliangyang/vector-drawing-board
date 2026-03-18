@@ -109,6 +109,12 @@ class TerminalWidget(QWidget):
         self._render_timer.timeout.connect(self._render_screen)
         self._pending_render = False
         
+        # 光标闪烁定时器
+        self._cursor_visible = True
+        self._cursor_timer = QTimer(self)
+        self._cursor_timer.timeout.connect(self._toggle_cursor)
+        self._cursor_timer.start(500)  # 500ms 闪烁一次
+        
         # 初始工作目录
         self._initial_cwd = None
 
@@ -285,6 +291,11 @@ class TerminalWidget(QWidget):
         except Exception as e:
             print(f"Error reading output: {e}", file=sys.stderr)
 
+    def _toggle_cursor(self):
+        """切换光标可见状态并触发重新渲染。"""
+        self._cursor_visible = not self._cursor_visible
+        self._render_screen()
+    
     def _render_screen(self):
         """将 pyte screen 渲染到 QPlainTextEdit。"""
         self._text.setReadOnly(False)
@@ -292,6 +303,10 @@ class TerminalWidget(QWidget):
         
         cursor = self._text.textCursor()
         cursor.movePosition(QTextCursor.Start)
+        
+        # 获取当前光标位置
+        cursor_x = self._screen.cursor.x
+        cursor_y = self._screen.cursor.y
         
         # 遍历屏幕的每一行
         for y in range(self._screen.lines):
@@ -304,6 +319,9 @@ class TerminalWidget(QWidget):
                 
                 # 创建字符格式
                 fmt = QTextCharFormat()
+                
+                # 检查是否是光标位置
+                is_cursor = (x == cursor_x and y == cursor_y and self._cursor_visible)
                 
                 # 设置前景色
                 if char_data.fg != "default":
@@ -328,6 +346,13 @@ class TerminalWidget(QWidget):
                     fmt.setFontUnderline(True)
                 if char_data.reverse:
                     # 反转前景和背景色
+                    fg = fmt.foreground().color()
+                    bg = fmt.background().color()
+                    fmt.setForeground(bg)
+                    fmt.setBackground(QBrush(fg))
+                
+                # 如果是光标位置且光标可见，反转颜色
+                if is_cursor:
                     fg = fmt.foreground().color()
                     bg = fmt.background().color()
                     fmt.setForeground(bg)
@@ -441,6 +466,10 @@ class TerminalWidget(QWidget):
 
     def _cleanup(self):
         """清理 PTY 和子进程。"""
+        # 停止光标闪烁定时器
+        if self._cursor_timer:
+            self._cursor_timer.stop()
+        
         if self._notifier:
             self._notifier.setEnabled(False)
             self._notifier.deleteLater()
