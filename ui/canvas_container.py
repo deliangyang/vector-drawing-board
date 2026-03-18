@@ -14,7 +14,7 @@ class CanvasContainer(QWidget):
 
     terminal_count_changed = pyqtSignal(int)
 
-    default_width = 500
+    default_width = 600
     default_height = 300
 
     default_gap = 16
