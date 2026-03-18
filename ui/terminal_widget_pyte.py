@@ -288,13 +288,13 @@ class TerminalWidget(QWidget):
                     fmt.setBackground(QBrush(DEFAULT_BG))
                 
                 # 设置字体样式
-                if char_data.bold:
+                if "bold" in char_data.bold:
                     fmt.setFontWeight(QFont.Bold)
-                if char_data.italics:
+                if "italics" in char_data.italics:
                     fmt.setFontItalic(True)
-                if char_data.underscore:
+                if "underscore" in char_data.underscore:
                     fmt.setFontUnderline(True)
-                if char_data.reverse:
+                if "reverse" in char_data.reverse:
                     # 反转前景和背景色
                     fg = fmt.foreground().color()
                     bg = fmt.background().color()
