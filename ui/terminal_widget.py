@@ -89,15 +89,18 @@ class TerminalWidget(QWidget):
         self._text.setFrameShape(QFrame.NoFrame)
         self._text.setFocusPolicy(Qt.StrongFocus)
         self._text.installEventFilter(self)
+        
+        # 监听滚动条变化
+        self._text.verticalScrollBar().valueChanged.connect(self._on_scroll)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self._text, 1)
 
-        # Pyte 终端仿真器
+        # Pyte 终端仿真器（使用 HistoryScreen 支持历史记录）
         cols, rows = 80, 24
-        self._screen = pyte.Screen(cols, rows)
+        self._screen = pyte.HistoryScreen(cols, rows, history=10000)  # 保留10000行历史
         self._stream = pyte.ByteStream(self._screen)
         
         # 缓冲区用于存储不完整的数据
@@ -114,6 +117,9 @@ class TerminalWidget(QWidget):
         self._cursor_timer = QTimer(self)
         self._cursor_timer.timeout.connect(self._toggle_cursor)
         self._cursor_timer.start(500)  # 500ms 闪烁一次
+        
+        # 跟踪是否应该自动滚动到底部
+        self._auto_scroll = True
         
         # 初始工作目录
         self._initial_cwd = None
@@ -143,8 +149,8 @@ class TerminalWidget(QWidget):
         # 获取终端大小
         cols, rows = self._get_terminal_size()
         
-        # 重新创建 screen 以适应窗口大小
-        self._screen = pyte.Screen(cols, rows)
+        # 重新创建 screen 以适应窗口大小（使用 HistoryScreen 支持历史记录）
+        self._screen = pyte.HistoryScreen(cols, rows, history=10000)  # 保留10000行历史
         self._stream = pyte.ByteStream(self._screen)
         
         try:
@@ -296,8 +302,14 @@ class TerminalWidget(QWidget):
         self._cursor_visible = not self._cursor_visible
         self._render_screen()
     
+    def _on_scroll(self):
+        """滚动条变化时检查是否应该自动滚动。"""
+        scrollbar = self._text.verticalScrollBar()
+        # 如果滚动到底部（或接近底部），启用自动滚动
+        self._auto_scroll = scrollbar.value() >= scrollbar.maximum() - 10
+    
     def _render_screen(self):
-        """将 pyte screen 渲染到 QPlainTextEdit。"""
+        """将 pyte screen 渲染到 QPlainTextEdit（包含历史记录）。"""
         self._text.setReadOnly(False)
         self._text.clear()
         
@@ -308,59 +320,133 @@ class TerminalWidget(QWidget):
         cursor_x = self._screen.cursor.x
         cursor_y = self._screen.cursor.y
         
-        # 遍历屏幕的每一行
+        # 首先渲染历史记录（如果有）
+        try:
+            # HistoryScreen 的 history 是一个 deque，检查是否可迭代
+            if hasattr(self._screen, 'history') and len(self._screen.history) > 0:
+                for line in self._screen.history:
+                    # 确保 line 是可索引的对象
+                    if not hasattr(line, '__getitem__'):
+                        continue
+                    
+                    # 安全处理：使用行的实际长度，避免索引越界
+                    try:
+                        line_length = len(line)
+                    except (TypeError, AttributeError):
+                        continue
+                    
+                    for x in range(min(line_length, self._screen.columns)):
+                        try:
+                            char_data = line[x]
+                            char = char_data.data
+                            
+                            # 创建字符格式
+                            fmt = QTextCharFormat()
+                            
+                            # 设置前景色
+                            if char_data.fg != "default":
+                                fg_color = ANSI_COLORS.get(char_data.fg, DEFAULT_FG)
+                                fmt.setForeground(fg_color)
+                            else:
+                                fmt.setForeground(DEFAULT_FG)
+                            
+                            # 设置背景色
+                            if char_data.bg != "default":
+                                bg_color = ANSI_COLORS.get(char_data.bg, DEFAULT_BG)
+                                fmt.setBackground(QBrush(bg_color))
+                            else:
+                                fmt.setBackground(QBrush(DEFAULT_BG))
+                            
+                            # 设置字体样式
+                            if char_data.bold:
+                                fmt.setFontWeight(QFont.Bold)
+                            if char_data.italics:
+                                fmt.setFontItalic(True)
+                            if char_data.underscore:
+                                fmt.setFontUnderline(True)
+                            if char_data.reverse:
+                                # 反转前景和背景色
+                                fg = fmt.foreground().color()
+                                bg = fmt.background().color()
+                                fmt.setForeground(bg)
+                                fmt.setBackground(QBrush(fg))
+                            
+                            # 插入字符
+                            cursor.setCharFormat(fmt)
+                            cursor.insertText(char if char != "\x00" else " ")
+                        except (IndexError, AttributeError, TypeError):
+                            # 如果访问失败，跳过这个字符
+                            continue
+                    
+                    # 每行结束后添加换行
+                    cursor.insertText("\n")
+        except (AttributeError, TypeError):
+            # 如果 history 不可用，跳过历史记录渲染
+            pass
+        
+        # 然后渲染当前屏幕的每一行
         for y in range(self._screen.lines):
             line = self._screen.buffer[y]
             
-            # 渲染该行的每个字符
-            for x in range(self._screen.columns):
-                char_data = line[x]
-                char = char_data.data
-                
-                # 创建字符格式
-                fmt = QTextCharFormat()
-                
-                # 检查是否是光标位置
-                is_cursor = (x == cursor_x and y == cursor_y and self._cursor_visible)
-                
-                # 设置前景色
-                if char_data.fg != "default":
-                    fg_color = ANSI_COLORS.get(char_data.fg, DEFAULT_FG)
-                    fmt.setForeground(fg_color)
-                else:
-                    fmt.setForeground(DEFAULT_FG)
-                
-                # 设置背景色
-                if char_data.bg != "default":
-                    bg_color = ANSI_COLORS.get(char_data.bg, DEFAULT_BG)
-                    fmt.setBackground(QBrush(bg_color))
-                else:
-                    fmt.setBackground(QBrush(DEFAULT_BG))
-                
-                # 设置字体样式
-                if char_data.bold:
-                    fmt.setFontWeight(QFont.Bold)
-                if char_data.italics:
-                    fmt.setFontItalic(True)
-                if char_data.underscore:
-                    fmt.setFontUnderline(True)
-                if char_data.reverse:
-                    # 反转前景和背景色
-                    fg = fmt.foreground().color()
-                    bg = fmt.background().color()
-                    fmt.setForeground(bg)
-                    fmt.setBackground(QBrush(fg))
-                
-                # 如果是光标位置且光标可见，反转颜色
-                if is_cursor:
-                    fg = fmt.foreground().color()
-                    bg = fmt.background().color()
-                    fmt.setForeground(bg)
-                    fmt.setBackground(QBrush(fg))
-                
-                # 插入字符
-                cursor.setCharFormat(fmt)
-                cursor.insertText(char if char != "\x00" else " ")
+            # 渲染该行的每个字符（安全处理，避免索引越界）
+            try:
+                line_length = len(line)
+            except (TypeError, AttributeError):
+                # 如果无法获取长度，跳过这一行
+                continue
+            
+            for x in range(min(line_length, self._screen.columns)):
+                try:
+                    char_data = line[x]
+                    char = char_data.data
+                    
+                    # 创建字符格式
+                    fmt = QTextCharFormat()
+                    
+                    # 检查是否是光标位置
+                    is_cursor = (x == cursor_x and y == cursor_y and self._cursor_visible)
+                    
+                    # 设置前景色
+                    if char_data.fg != "default":
+                        fg_color = ANSI_COLORS.get(char_data.fg, DEFAULT_FG)
+                        fmt.setForeground(fg_color)
+                    else:
+                        fmt.setForeground(DEFAULT_FG)
+                    
+                    # 设置背景色
+                    if char_data.bg != "default":
+                        bg_color = ANSI_COLORS.get(char_data.bg, DEFAULT_BG)
+                        fmt.setBackground(QBrush(bg_color))
+                    else:
+                        fmt.setBackground(QBrush(DEFAULT_BG))
+                    
+                    # 设置字体样式
+                    if char_data.bold:
+                        fmt.setFontWeight(QFont.Bold)
+                    if char_data.italics:
+                        fmt.setFontItalic(True)
+                    if char_data.underscore:
+                        fmt.setFontUnderline(True)
+                    if char_data.reverse:
+                        # 反转前景和背景色
+                        fg = fmt.foreground().color()
+                        bg = fmt.background().color()
+                        fmt.setForeground(bg)
+                        fmt.setBackground(QBrush(fg))
+                    
+                    # 如果是光标位置且光标可见，反转颜色
+                    if is_cursor:
+                        fg = fmt.foreground().color()
+                        bg = fmt.background().color()
+                        fmt.setForeground(bg)
+                        fmt.setBackground(QBrush(fg))
+                    
+                    # 插入字符
+                    cursor.setCharFormat(fmt)
+                    cursor.insertText(char if char != "\x00" else " ")
+                except (IndexError, AttributeError, TypeError):
+                    # 如果访问失败，跳过这个字符
+                    continue
             
             # 每行结束后添加换行
             if y < self._screen.lines - 1:
@@ -368,9 +454,10 @@ class TerminalWidget(QWidget):
         
         self._text.setReadOnly(True)
         
-        # 滚动到底部
-        self._text.moveCursor(QTextCursor.End)
-        self._text.ensureCursorVisible()
+        # 只在自动滚动模式下滚动到底部
+        if self._auto_scroll:
+            self._text.moveCursor(QTextCursor.End)
+            self._text.ensureCursorVisible()
 
     def eventFilter(self, obj, event):
         """拦截键盘事件并发送到 PTY。"""
