@@ -35,12 +35,14 @@ class TerminalCard(QFrame):
             "border-radius: 4px; }"
         )
         self.setMinimumSize(self.MIN_WIDTH, self.MIN_HEIGHT)
+        self.setFocusPolicy(Qt.StrongFocus)  # 支持焦点
 
         self._title = title
         self._drag_start_pos = None
         self._drag_start_geometry = None
         self._resize_start_geometry = None
         self._resize_start_global = None
+        self._has_focus = False  # 跟踪焦点状态
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -70,6 +72,7 @@ class TerminalCard(QFrame):
 
         # Terminal content
         self._terminal = TerminalWidget(self)
+        self._terminal.installEventFilter(self)  # 监听终端焦点变化
         layout.addWidget(self._terminal, 1)
 
         # Resize handle overlay: we'll handle mouse on the card's bottom-right
@@ -89,6 +92,44 @@ class TerminalCard(QFrame):
     def set_zoom(self, zoom: float):
         """通知内部终端 widget 更新缩放。"""
         self._terminal.set_zoom(zoom)
+    
+    def _update_border_style(self):
+        """根据焦点状态更新边框样式。"""
+        if self._has_focus:
+            # 焦点时：高亮边框（亮蓝色）
+            self.setStyleSheet(
+                "TerminalCard { background-color: #2d2d2d; border: 2px solid #0078d4; "
+                "border-radius: 4px; }"
+            )
+        else:
+            # 无焦点时：普通边框
+            self.setStyleSheet(
+                "TerminalCard { background-color: #2d2d2d; border: 1px solid #555; "
+                "border-radius: 4px; }"
+            )
+    
+    def focusInEvent(self, event):
+        """获得焦点时高亮边框。"""
+        self._has_focus = True
+        self._update_border_style()
+        super().focusInEvent(event)
+    
+    def focusOutEvent(self, event):
+        """失去焦点时恢复边框。"""
+        self._has_focus = False
+        self._update_border_style()
+        super().focusOutEvent(event)
+    
+    def eventFilter(self, obj, event):
+        """监听终端 widget 的焦点变化。"""
+        if obj == self._terminal:
+            if event.type() == event.FocusIn:
+                self._has_focus = True
+                self._update_border_style()
+            elif event.type() == event.FocusOut:
+                self._has_focus = False
+                self._update_border_style()
+        return super().eventFilter(obj, event)
 
     def _on_close(self):
         self.closed.emit()
@@ -111,13 +152,19 @@ class TerminalCard(QFrame):
         if self._is_in_resize_handle(pos):
             self._resize_start_geometry = self.geometry()
             self._resize_start_global = event.globalPos()
+            # 调整大小时也设置焦点
+            self._terminal.setFocus()
             event.accept()
         elif self._is_in_title_bar(pos):
             self._drag_start_pos = self.pos()
             self._drag_start_geometry = self.geometry()
             self._drag_start_global = event.globalPos()
+            # 拖动时也设置焦点，使当前终端高亮
+            self._terminal.setFocus()
             event.accept()
         else:
+            # 点击终端区域时，确保获得焦点
+            self._terminal.setFocus()
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
